@@ -320,7 +320,7 @@ def main(
             controls.set_quit_callback(lambda: stop_event.set())
             
             _eprint("[sleap-viz] Interactive viewer ready. Press 'h' for help or 'q' to quit.")
-            _eprint("Controls: Space=play/pause, Arrows=navigate, 0-9=speed, L=loop")
+            _eprint("Controls: Space=play/pause, Arrows=navigate, 0-9=speed, L=loop, F=FPS display")
             _eprint("Image adjustments: B=brightness, C=contrast, G=gamma, R=reset")
             _eprint("Tone mapping: T=toggle, Shift+H=histogram, E=CLAHE, M=cycle modes")
             _eprint("Config: Ctrl+Shift+F=save, Ctrl+Shift+O=load")

@@ -37,6 +37,7 @@ class InteractiveControls:
     - A/D: Pan timeline left/right
     - S: Clear selection
     - P: Play selection (if selected)
+    - F: Toggle FPS/performance display
     - Q/Escape: Quit
     
     Mouse controls:
@@ -464,6 +465,12 @@ class InteractiveControls:
                     # Note: Full implementation would require modifying Controller to support play range
                 else:
                     print("No selection to play")
+        
+        # Performance display toggle
+        elif key == "f" and "Control" not in modifiers and "Shift" not in modifiers:
+            # F: Toggle performance display
+            if hasattr(self.controller.vis, 'toggle_perf_display'):
+                self.controller.vis.toggle_perf_display()
         
         # Config operations
         elif key == "f" and "Control" in modifiers and "Shift" in modifiers:

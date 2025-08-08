@@ -9,6 +9,7 @@ from typing import Optional, Callable, TYPE_CHECKING
 
 from .annotation_source import AnnotationSource
 from .video_source import VideoSource
+from .performance import PerformanceMonitor
 
 if TYPE_CHECKING:
     from .timeline import TimelineController
@@ -55,6 +56,10 @@ class Controller:
         self.play_fps = play_fps
         self.missing_frame_policy = missing_frame_policy
         
+        # Share performance monitor with visualizer
+        self.perf_monitor = PerformanceMonitor()
+        self.vis.perf_monitor = self.perf_monitor
+        
         # Playback state
         self.state = PlaybackState.STOPPED
         self.current_frame = 0
@@ -76,11 +81,15 @@ class Controller:
 
     async def goto(self, index: int) -> None:
         """Seek to a specific frame index and draw once."""
+        # Start frame timing
+        self.perf_monitor.start_frame(index)
+        
         # Clamp to valid range
         index = max(0, min(index, self.total_frames - 1))
         self.current_frame = index
         
         # Request frame and wait briefly for it to load
+        self.perf_monitor.start_timer("video_load")
         await self.vs.request(index)
         await asyncio.sleep(0.01)
         
@@ -90,13 +99,20 @@ class Controller:
             near = self.vs.nearest_available(index)
             if near is not None:
                 frame = await self.vs.get(near)
+        self.perf_monitor.end_timer("video_load")
         
         if frame is not None:
+            self.perf_monitor.start_timer("set_frame")
             self.vis.set_frame_image(frame)
+            self.perf_monitor.end_timer("set_frame")
         
         # Load and set annotations
         try:
+            self.perf_monitor.start_timer("annotation_load")
             data = self.anno.get_frame_data(self.video, index, missing_policy=self.missing_frame_policy)
+            self.perf_monitor.end_timer("annotation_load")
+            
+            self.perf_monitor.start_timer("set_overlay")
             self.vis.set_overlay(
                 data["points_xy"],
                 data["visible"],
@@ -107,14 +123,27 @@ class Controller:
                 None,
                 data.get("labels"),
             )
+            self.perf_monitor.end_timer("set_overlay")
         except Exception:
             pass
         
+        self.perf_monitor.start_timer("draw")
         self.vis.draw()
+        self.perf_monitor.end_timer("draw")
         
         # Update timeline playhead
         if self.timeline_controller:
+            self.perf_monitor.start_timer("timeline_update")
             self.timeline_controller.set_current_frame(self.current_frame)
+            self.perf_monitor.end_timer("timeline_update")
+        
+        # End frame timing
+        self.perf_monitor.end_frame()
+        
+        # Update performance display if enabled
+        if self.vis.show_perf_stats:
+            stats_text = self.perf_monitor.get_stats_text()
+            self.vis.update_perf_display(stats_text)
         
         # Notify callback
         if self.on_frame_changed:

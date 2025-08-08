@@ -69,17 +69,23 @@ class Visualizer:
             size=10.0,  # Increased size for visibility
             color=(1, 0, 0, 1),  # Red
             size_space="screen",
-            aa=True
+            aa=True,
+            color_mode="vertex"  # Always use vertex colors
         )
         self.points_mesh = None
+        self.points_color_buffer = None
+        self._last_points_count = 0
         
         # Lines overlay
         self.lines_geometry = None
         self.lines_material = gfx.LineSegmentMaterial(
             thickness=4.0,  # Increased thickness for visibility
-            color=(0, 1, 0, 1)  # Green
+            color=(0, 1, 0, 1),  # Green
+            color_mode="vertex"  # Always use vertex colors
         )
         self.lines_mesh = None
+        self.lines_color_buffer = None
+        self._last_lines_count = 0
         
         # Image adjustment parameters
         self.gain = 1.0
@@ -103,24 +109,30 @@ class Visualizer:
         self.hovered_instance = -1
         self.hovered_node = -1
         
+        # Performance display
+        self.show_perf_stats = False
+        self.perf_text_mesh = None
+        self._init_perf_display()
+        
         # Zoom and pan state
         self.zoom_level = 1.0  # 1.0 = fit to window, >1.0 = zoomed in
         self.pan_x = 0.0  # Pan offset in pixels
         self.pan_y = 0.0
         self._base_width = width
         self._base_height = height
+        
+        # Performance monitor (optional)
+        self.perf_monitor = None
 
     def set_frame_image(self, frame: Frame) -> None:
         """Upload/replace the background texture with the given frame."""
         if frame is None or frame.rgb is None:
             return
         
-        # Remove old video mesh if exists
-        if self.video_mesh is not None:
-            self.scene.remove(self.video_mesh)
-            self.video_mesh = None
+        perf = self.perf_monitor
         
         # Ensure frame data is float32 and normalized
+        if perf: perf.start_timer("prepare_frame_data")
         frame_data = frame.rgb.astype(np.float32) / 255.0
         
         # Convert grayscale to RGB if needed
@@ -128,11 +140,15 @@ class Visualizer:
             frame_data = np.repeat(frame_data, 3, axis=2)
         elif frame_data.ndim == 2:
             frame_data = np.stack([frame_data] * 3, axis=2)
+        if perf: perf.end_timer("prepare_frame_data", "set_frame")
         
         # Apply image adjustments
+        if perf: perf.start_timer("apply_adjustments")
         frame_data = self._apply_image_adjustments(frame_data)
+        if perf: perf.end_timer("apply_adjustments", "set_frame")
         
         # Create or update texture
+        if perf: perf.start_timer("texture_update")
         if self.video_texture is None:
             self.video_texture = gfx.Texture(frame_data, dim=2)
         else:
@@ -144,30 +160,42 @@ class Visualizer:
             except Exception:
                 # If update fails, recreate texture
                 self.video_texture = gfx.Texture(frame_data, dim=2)
+        if perf: perf.end_timer("texture_update", "set_frame")
         
-        # Create a plane mesh that fills the canvas
-        # Use plane_geometry to create a quad
-        plane_geo = gfx.plane_geometry(self.width, self.height)
-        
-        # Create material with the texture
-        material = gfx.MeshBasicMaterial(map=self.video_texture)
-        
-        # Create the mesh
-        self.video_mesh = gfx.Mesh(plane_geo, material)
-        
-        # Position video at top portion of canvas (timeline is at bottom)
-        # Shift up by timeline_height/2 to make room for timeline
-        self.video_mesh.local.position = (
-            self.width / 2, 
-            self.timeline_height + self.height / 2,  # Shifted up
-            -1
-        )
-        
-        # Add to scene as background
-        self.scene.add(self.video_mesh)
+        # Create mesh only if it doesn't exist
+        if self.video_mesh is None:
+            if perf: perf.start_timer("create_mesh")
+            
+            # Create a plane mesh that fills the canvas
+            plane_geo = gfx.plane_geometry(self.width, self.height)
+            
+            # Create material with the texture
+            material = gfx.MeshBasicMaterial(map=self.video_texture)
+            
+            # Create the mesh
+            self.video_mesh = gfx.Mesh(plane_geo, material)
+            
+            # Position video at top portion of canvas (timeline is at bottom)
+            self.video_mesh.local.position = (
+                self.width / 2, 
+                self.timeline_height + self.height / 2,  # Shifted up
+                -1
+            )
+            
+            # Add to scene as background
+            self.scene.add(self.video_mesh)
+            
+            if perf: perf.end_timer("create_mesh", "set_frame")
+        else:
+            # Just update the texture reference in the material
+            if perf: perf.start_timer("update_mesh_texture")
+            self.video_mesh.material.map = self.video_texture
+            if perf: perf.end_timer("update_mesh_texture", "set_frame")
         
         # Apply current zoom/pan
+        if perf: perf.start_timer("update_camera")
         self._update_camera()
+        if perf: perf.end_timer("update_camera", "set_frame")
 
     def set_overlay(
         self,
@@ -180,31 +208,41 @@ class Visualizer:
         colors_rgba: np.ndarray | None = None,
         labels: list[str] | None = None,
     ) -> None:
-        """Update GPU buffers for points/lines and prepare labels/tooltips."""
-        # Remove old overlays
-        if self.points_mesh is not None:
-            self.scene.remove(self.points_mesh)
-            self.points_mesh = None
-        if self.lines_mesh is not None:
-            self.scene.remove(self.lines_mesh)
-            self.lines_mesh = None
+        """Update GPU buffers for points/lines with mesh reuse optimization."""
+        perf = self.perf_monitor
         
         if points_xy.size == 0:
+            # Clear overlays if no data
+            if perf: perf.start_timer("clear_overlays")
+            if self.points_mesh is not None:
+                self.scene.remove(self.points_mesh)
+                self.points_mesh = None
+                self._last_points_count = 0
+            if self.lines_mesh is not None:
+                self.scene.remove(self.lines_mesh)
+                self.lines_mesh = None
+                self._last_lines_count = 0
+            if perf: perf.end_timer("clear_overlays", "set_overlay")
             return
         
         # Get colors from color policy if not provided
+        if perf: perf.start_timer("compute_colors")
         if colors_rgba is None:
             colors_rgba = self.color_policy.get_colors(
                 points_xy, visible, inst_kind, track_id, node_ids
             )
+        if perf: perf.end_timer("compute_colors", "set_overlay")
         
         # Flatten points for rendering
+        if perf: perf.start_timer("prepare_data")
         n_inst, n_nodes, _ = points_xy.shape
         points_flat = points_xy.reshape(-1, 2)
         visible_flat = visible.reshape(-1)
         colors_flat = colors_rgba.reshape(-1, 4)
+        if perf: perf.end_timer("prepare_data", "set_overlay")
         
         # Filter points based on visibility mode
+        if perf: perf.start_timer("filter_points")
         if self.color_policy.invisible_mode == "hide":
             # Only include visible points
             visible_indices = np.where(visible_flat)[0]
@@ -214,16 +252,19 @@ class Visualizer:
         
         if len(visible_indices) == 0:
             return
+        if perf: perf.end_timer("filter_points", "set_overlay")
         
         # Convert pixel coordinates to OpenGL coordinates (flip Y and shift for timeline)
+        if perf: perf.start_timer("convert_coordinates")
         positions_3d = np.zeros((len(visible_indices), 3), dtype=np.float32)
         positions_3d[:, 0] = points_flat[visible_indices, 0]  # X stays the same
         # Flip Y and shift up by timeline height
         positions_3d[:, 1] = self.timeline_height + (self.height - points_flat[visible_indices, 1])
         positions_3d[:, 2] = 0  # Z = 0 for overlay (in front of background at z=-1)
+        if perf: perf.end_timer("convert_coordinates", "set_overlay")
         
-        # Create points geometry and mesh
-        self.points_geometry = gfx.Geometry(positions=positions_3d)
+        # Update or create points mesh with buffer reuse
+        if perf: perf.start_timer("update_points_mesh")
         
         # Apply colors with highlighting
         visible_colors = colors_flat[visible_indices].astype(np.float32)
@@ -242,23 +283,42 @@ class Visualizer:
                 visible_colors[i] = visible_colors[i] * 1.5  # Brighten
                 visible_colors[i] = np.clip(visible_colors[i], 0, 1)
         
-        # Create a Buffer for colors
-        colors_buffer = gfx.Buffer(visible_colors)
-        self.points_geometry.colors = colors_buffer
-        self.points_material.color_mode = "vertex"
+        points_count = len(positions_3d)
         
-        self.points_mesh = gfx.Points(self.points_geometry, self.points_material)
-        self.scene.add(self.points_mesh)
+        # Check if we need to recreate the mesh (size changed)
+        if self.points_mesh is None or points_count != self._last_points_count:
+            # Remove old mesh if it exists
+            if self.points_mesh is not None:
+                self.scene.remove(self.points_mesh)
+            
+            # Create new geometry and mesh
+            self.points_geometry = gfx.Geometry(positions=positions_3d)
+            self.points_color_buffer = gfx.Buffer(visible_colors)
+            self.points_geometry.colors = self.points_color_buffer
+            
+            self.points_mesh = gfx.Points(self.points_geometry, self.points_material)
+            self.scene.add(self.points_mesh)
+            
+            self._last_points_count = points_count
+        else:
+            # Just update the buffers (much faster!)
+            self.points_geometry.positions.data[:] = positions_3d
+            self.points_geometry.positions.update_range()
+            
+            self.points_color_buffer.data[:] = visible_colors
+            self.points_color_buffer.update_range()
+        
+        if perf: perf.end_timer("update_points_mesh", "set_overlay")
         
         # Apply zoom/pan transform
         if self.zoom_level != 1.0 or self.pan_x != 0 or self.pan_y != 0:
             self._update_camera()  # Use the centralized update method
         
-        # Create lines for edges with color support
+        # Update or create lines for edges with buffer reuse
         if edges is not None and edges.size > 0:
+            if perf: perf.start_timer("update_lines_mesh")
             line_positions = []
             line_colors = []
-            line_count = 0
             
             for inst_idx in range(n_inst):
                 inst_points = points_xy[inst_idx]
@@ -291,29 +351,40 @@ class Visualizer:
                             # Use average color of the two nodes for the edge
                             edge_color = (inst_colors[node1] + inst_colors[node2]) / 2.0
                             line_colors.extend([edge_color, edge_color])
-                            line_count += 1
             
-            if line_count > 0:
+            if line_positions:
                 line_positions = np.array(line_positions, dtype=np.float32)
                 line_colors = np.array(line_colors, dtype=np.float32)
+                lines_count = len(line_positions)
                 
-                self.lines_geometry = gfx.Geometry(positions=line_positions)
-                # Add colors to lines
-                colors_buffer = gfx.Buffer(line_colors)
-                self.lines_geometry.colors = colors_buffer
-                
-                # Update line material to use vertex colors
-                self.lines_material.color_mode = "vertex"
-                
-                self.lines_mesh = gfx.Line(
-                    self.lines_geometry,
-                    self.lines_material
-                )
-                self.scene.add(self.lines_mesh)
+                # Check if we need to recreate the lines mesh (size changed)
+                if self.lines_mesh is None or lines_count != self._last_lines_count:
+                    # Remove old mesh if it exists
+                    if self.lines_mesh is not None:
+                        self.scene.remove(self.lines_mesh)
+                    
+                    # Create new geometry and mesh
+                    self.lines_geometry = gfx.Geometry(positions=line_positions)
+                    self.lines_color_buffer = gfx.Buffer(line_colors)
+                    self.lines_geometry.colors = self.lines_color_buffer
+                    
+                    self.lines_mesh = gfx.Line(self.lines_geometry, self.lines_material)
+                    self.scene.add(self.lines_mesh)
+                    
+                    self._last_lines_count = lines_count
+                else:
+                    # Just update the buffers (much faster!)
+                    self.lines_geometry.positions.data[:] = line_positions
+                    self.lines_geometry.positions.update_range()
+                    
+                    self.lines_color_buffer.data[:] = line_colors
+                    self.lines_color_buffer.update_range()
                 
                 # Apply zoom/pan transform
                 if self.zoom_level != 1.0 or self.pan_x != 0 or self.pan_y != 0:
                     self._update_camera()  # Use the centralized update method
+            
+            if perf: perf.end_timer("update_lines_mesh", "set_overlay")
 
     def set_color_policy(
         self,
@@ -483,15 +554,52 @@ class Visualizer:
 
     def draw(self) -> None:
         """Render one frame to the current canvas or offscreen target."""
+        perf = self.perf_monitor
+        
         # Sync timeline meshes if needed
+        if perf: perf.start_timer("sync_timeline")
         if hasattr(self, 'timeline_view'):
             self._sync_timeline_meshes()
+        if perf: perf.end_timer("sync_timeline", "draw")
         
         # Render everything in one pass
+        if perf: perf.start_timer("wgpu_render")
         self.renderer.render(self.scene, self.camera)
+        if perf: perf.end_timer("wgpu_render", "draw")
         
         if self.mode != "offscreen":
+            if perf: perf.start_timer("request_draw")
             self.canvas.request_draw()
+            if perf: perf.end_timer("request_draw", "draw")
+    
+    def _init_perf_display(self) -> None:
+        """Initialize performance stats text display."""
+        # For now, we'll use console output for performance stats
+        # TODO: Add proper text overlay once pygfx text rendering is figured out
+        self.perf_text_mesh = None  # Placeholder for future implementation
+    
+    def update_perf_display(self, stats_text: str) -> None:
+        """Update performance stats display.
+        
+        Args:
+            stats_text: Multi-line performance statistics text.
+        """
+        # For now, print to console when stats are enabled
+        if self.show_perf_stats:
+            # Clear previous lines and print stats
+            print("\033[2J\033[H")  # Clear screen
+            print("[PERFORMANCE STATS]")
+            print(stats_text)
+            print("-" * 40)
+    
+    def toggle_perf_display(self) -> None:
+        """Toggle visibility of performance statistics."""
+        self.show_perf_stats = not self.show_perf_stats
+        if self.show_perf_stats:
+            print("[Performance stats enabled - will print to console]")
+        else:
+            print("[Performance stats disabled]")
+            print("\033[2J\033[H")  # Clear screen when disabling
 
     def read_pixels(self) -> np.ndarray:
         """Return the last rendered image as uint8 H x W x 3.
