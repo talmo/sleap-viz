@@ -172,7 +172,9 @@ class Visualizer:
         if colors_rgba is not None and colors_rgba.size > 0:
             colors_flat = colors_rgba.reshape(-1, 4)
             visible_colors = colors_flat[visible_indices].astype(np.float32)
-            self.points_geometry.colors = visible_colors
+            # Create a Buffer for colors
+            colors_buffer = gfx.Buffer(visible_colors)
+            self.points_geometry.colors = colors_buffer
             self.points_material.color_mode = "vertex"
         else:
             self.points_material.color_mode = "uniform"

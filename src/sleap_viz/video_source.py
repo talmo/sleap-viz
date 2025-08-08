@@ -51,9 +51,11 @@ class VideoSource:
             if index < 0:
                 break
             try:
-                arr = self.video[index]  # (H, W, C)
+                arr = self.video[index]  # (H, W, C) or (H, W)
                 if arr.ndim == 2:
                     arr = np.repeat(arr[..., None], 3, axis=2)
+                elif arr.shape[-1] == 1:
+                    arr = np.repeat(arr, 3, axis=2)
                 h, w, _ = arr.shape
                 frame = Frame(
                     index=index, rgb=arr.astype(np.uint8, copy=False), size=(w, h)
