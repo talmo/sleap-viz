@@ -97,11 +97,16 @@ class InteractiveControls:
             self.canvas.add_event_handler(self._on_mouse_move, "pointer_move")
             self.canvas.add_event_handler(self._on_mouse_up, "pointer_up")
             self.canvas.add_event_handler(self._on_wheel, "wheel")
-            # Try to add pinch handler if supported
+            # Try to add pinch/gesture handlers if supported
             try:
                 self.canvas.add_event_handler(self._on_pinch, "pinch")
             except:
                 pass  # Pinch not supported
+            try:
+                # Safari-specific gesture event
+                self.canvas.add_event_handler(self._on_gesture, "gesturechange")
+            except:
+                pass  # GestureEvent not supported
             self._handlers_attached = True
             
     def detach_handlers(self) -> None:
@@ -119,6 +124,10 @@ class InteractiveControls:
                 self.canvas.remove_event_handler(self._on_pinch, "pinch")
             except:
                 pass  # Pinch not supported
+            try:
+                self.canvas.remove_event_handler(self._on_gesture, "gesturechange")
+            except:
+                pass  # GestureEvent not supported
             self._handlers_attached = False
             
     def set_quit_callback(self, callback: Callable[[], None]) -> None:
@@ -525,11 +534,10 @@ class InteractiveControls:
             if self._pan_start_x is not None and hasattr(self.controller, 'vis'):
                 dx = x - self._pan_start_x
                 dy = y - self._pan_start_y
-                # Pan X is inverted (drag right to move view left)
-                # Pan Y is NOT inverted (drag down to move view down)
+                # Natural panning - drag moves the image with the cursor
                 self.controller.vis.set_pan(
-                    self._pan_start_vis_x - dx,
-                    self._pan_start_vis_y + dy  # Changed from minus to plus
+                    self._pan_start_vis_x + dx,
+                    self._pan_start_vis_y + dy
                 )
                 self.controller.vis.draw()
         # Check for hover over points (if not dragging)
@@ -620,10 +628,16 @@ class InteractiveControls:
         x = event.get("x", 0)
         y = event.get("y", 0)
         dy = event.get("dy", 0)  # Wheel delta
+        dx = event.get("dx", 0)  # Horizontal delta (might be used for pinch)
         modifiers = event.get("modifiers", [])
         
-        # Check if this is a pinch gesture (Ctrl + wheel on many systems)
-        is_pinch = "Control" in modifiers
+        # MacBook trackpad pinch gestures come as wheel events with Control modifier
+        # The event.ctrlKey might be set even when user isn't pressing Ctrl
+        is_pinch = "Control" in modifiers or event.get("ctrlKey", False)
+        
+        # Debug output to understand the events
+        if is_pinch and dy != 0:
+            print(f"Pinch detected: dy={dy:.2f}, dx={dx:.2f}, modifiers={modifiers}")
         
         if hasattr(self.canvas, "get_logical_size"):
             width, height = self.canvas.get_logical_size()
@@ -635,17 +649,19 @@ class InteractiveControls:
                     self.controller.timeline_controller.handle_wheel(-dy, x)
             else:
                 # Handle zoom on video
-                # For pinch (Ctrl+wheel), use smaller zoom factor for smoother control
-                if is_pinch:
-                    # Pinch zoom - use direct scale factor
-                    if dy != 0 and hasattr(self.controller, 'vis'):
-                        scale = 1.0 - dy * 0.01  # Smaller factor for smoother zoom
+                if is_pinch and dy != 0:
+                    # MacBook trackpad pinch zoom
+                    # dy is negative for zoom in, positive for zoom out
+                    if hasattr(self.controller, 'vis'):
+                        # Use exponential scaling for smoother zoom
+                        scale = pow(1.01, -dy)  # Negative because pinch in = negative dy = zoom in
                         current_zoom = self.controller.vis.zoom_level
                         self.controller.vis.set_zoom(current_zoom * scale, x, y)
                         self.controller.vis.draw()
-                        print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
-                else:
-                    # Regular mouse wheel zoom
+                        # Remove debug print after testing
+                        # print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
+                elif not is_pinch:
+                    # Regular mouse wheel zoom (without Ctrl)
                     if dy > 0:
                         self._zoom_video_out(center_x=x, center_y=y)
                     elif dy < 0:
@@ -729,4 +745,18 @@ class InteractiveControls:
             # Apply scale directly
             current_zoom = self.controller.vis.zoom_level
             self.controller.vis.set_zoom(current_zoom * scale, x, y)
+            self.controller.vis.draw()
+    
+    def _on_gesture(self, event) -> None:
+        """Handle Safari-specific gesture events.
+        
+        Args:
+            event: The gesture event.
+        """
+        scale = event.get("scale", 1.0)
+        if scale != 1.0 and hasattr(self.controller, 'vis'):
+            # Apply incremental scale
+            self.controller.vis.set_zoom(self.controller.vis.zoom_level * scale, 
+                                        self.canvas.get_logical_size()[0] / 2,
+                                        self.canvas.get_logical_size()[1] / 2)
             self.controller.vis.draw()

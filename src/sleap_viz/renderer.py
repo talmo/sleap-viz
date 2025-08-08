@@ -252,8 +252,7 @@ class Visualizer:
         
         # Apply zoom/pan transform
         if self.zoom_level != 1.0 or self.pan_x != 0 or self.pan_y != 0:
-            self.points_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
-            self.points_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)
+            self._update_camera()  # Use the centralized update method
         
         # Create lines for edges with color support
         if edges is not None and edges.size > 0:
@@ -314,8 +313,7 @@ class Visualizer:
                 
                 # Apply zoom/pan transform
                 if self.zoom_level != 1.0 or self.pan_x != 0 or self.pan_y != 0:
-                    self.lines_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
-                    self.lines_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)
+                    self._update_camera()  # Use the centralized update method
 
     def set_color_policy(
         self,
@@ -574,16 +572,33 @@ class Visualizer:
             
             # Position the video mesh with pan offset
             self.video_mesh.local.position = (
-                self.width / 2 + self.pan_x * self.zoom_level,
-                self.timeline_height + self.height / 2 + self.pan_y * self.zoom_level,
+                self.width / 2 + self.pan_x,
+                self.timeline_height + self.height / 2 + self.pan_y,
                 -1
             )
         
-        # Also scale and position the overlay meshes
+        # Scale and position overlay meshes to match video
+        # The overlays need to be scaled and positioned the same way
         if self.points_mesh:
+            # Points are positioned in screen space, so we need to apply zoom around center
+            # then translate by pan amount
             self.points_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
-            self.points_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)
+            # Center the scaling, then apply pan
+            center_x = self.width / 2
+            center_y = self.timeline_height + self.height / 2
+            self.points_mesh.local.position = (
+                center_x * (1 - self.zoom_level) + self.pan_x,
+                center_y * (1 - self.zoom_level) + self.pan_y,
+                0
+            )
             
         if self.lines_mesh:
+            # Same transformation for lines
             self.lines_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
-            self.lines_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)
+            center_x = self.width / 2
+            center_y = self.timeline_height + self.height / 2
+            self.lines_mesh.local.position = (
+                center_x * (1 - self.zoom_level) + self.pan_x,
+                center_y * (1 - self.zoom_level) + self.pan_y,
+                0
+            )
