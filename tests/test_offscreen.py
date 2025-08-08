@@ -2,6 +2,7 @@
 
 import asyncio
 import numpy as np
+import pytest
 import sleap_io as sio
 from PIL import Image
 
@@ -11,6 +12,7 @@ from sleap_viz.renderer import Visualizer
 from sleap_viz.controller import Controller
 
 
+@pytest.mark.asyncio
 async def test_offscreen_rendering():
     """Test the visualization pipeline with offscreen rendering."""
     print("Loading SLEAP data...")

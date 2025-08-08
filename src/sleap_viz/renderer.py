@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, Optional
 
 import numpy as np
 import pygfx as gfx
@@ -12,6 +12,10 @@ from wgpu.gui.offscreen import WgpuCanvas as OffscreenCanvas
 
 if TYPE_CHECKING:
     from .video_source import Frame
+    from .timeline import TimelineView
+
+from .styles import ColorPolicy
+from . import lut as lut_module
 
 
 class Visualizer:
@@ -20,29 +24,40 @@ class Visualizer:
     Modes: desktop (window), notebook (rfb), offscreen.
     """
 
-    def __init__(self, width: int, height: int, mode: str = "auto") -> None:
-        """Create canvas, device, and persistent GPU resources."""
+    def __init__(self, width: int, height: int, mode: str = "auto", timeline_height: int = 50) -> None:
+        """Create canvas, device, and persistent GPU resources.
+        
+        Args:
+            width: Video width in pixels.
+            height: Video height in pixels.
+            mode: Rendering mode (desktop, offscreen, etc.).
+            timeline_height: Height of timeline in pixels.
+        """
         self.width = width
         self.height = height
+        self.timeline_height = timeline_height
+        self.total_height = height + timeline_height
         self.mode = mode
         
         # Determine render mode
         if mode == "offscreen":
-            self.canvas = OffscreenCanvas(size=(width, height), pixel_ratio=1)
+            self.canvas = OffscreenCanvas(size=(width, self.total_height), pixel_ratio=1)
         else:
-            self.canvas = WgpuCanvas(size=(width, height), title="SLEAP Visualizer")
+            self.canvas = WgpuCanvas(size=(width, self.total_height), title="SLEAP Visualizer")
         
         # Create renderer
         self.renderer = gfx.WgpuRenderer(self.canvas)
         
-        # Create scene
+        # Create single scene for both video and timeline
         self.scene = gfx.Scene()
         
-        # Use OrthographicCamera for better control
-        self.camera = gfx.OrthographicCamera(width, height, maintain_aspect=False)
-        # Set view rectangle: left, right, top, bottom
-        # Use standard coordinate system (Y increases upward)
-        self.camera.show_rect(0, width, 0, height, depth=10)  # depth for z-range
+        # Timeline meshes will be added to main scene
+        self.timeline_meshes = []
+        
+        # Use OrthographicCamera for entire canvas (video + timeline)
+        self.camera = gfx.OrthographicCamera(width, self.total_height, maintain_aspect=False)
+        # Set view rectangle to cover video + timeline
+        self.camera.show_rect(0, width, 0, self.total_height, depth=10)
         
         # Video background mesh
         self.video_texture = None
@@ -72,11 +87,15 @@ class Visualizer:
         self.gamma = 1.0
         self.tone_map = "linear"
         self.lut = None
+        self.lut_mode = "none"  # none, histogram, clahe, gamma, sigmoid
+        self.lut_params = {}  # Parameters for LUT generation
         
         # Color policy
-        self.color_by = "instance"
-        self.colormap = "tab20"
-        self.invisible_mode = "dim"
+        self.color_policy = ColorPolicy(
+            color_by="instance",
+            colormap="tab20",
+            invisible_mode="dim"
+        )
 
     def set_frame_image(self, frame: Frame) -> None:
         """Upload/replace the background texture with the given frame."""
@@ -96,6 +115,9 @@ class Visualizer:
             frame_data = np.repeat(frame_data, 3, axis=2)
         elif frame_data.ndim == 2:
             frame_data = np.stack([frame_data] * 3, axis=2)
+        
+        # Apply image adjustments
+        frame_data = self._apply_image_adjustments(frame_data)
         
         # Create or update texture
         if self.video_texture is None:
@@ -120,8 +142,13 @@ class Visualizer:
         # Create the mesh
         self.video_mesh = gfx.Mesh(plane_geo, material)
         
-        # Position at center of canvas (plane_geometry is centered at origin)
-        self.video_mesh.local.position = (self.width / 2, self.height / 2, -1)
+        # Position video at top portion of canvas (timeline is at bottom)
+        # Shift up by timeline_height/2 to make room for timeline
+        self.video_mesh.local.position = (
+            self.width / 2, 
+            self.timeline_height + self.height / 2,  # Shifted up
+            -1
+        )
         
         # Add to scene as background
         self.scene.add(self.video_mesh)
@@ -149,67 +176,100 @@ class Visualizer:
         if points_xy.size == 0:
             return
         
+        # Get colors from color policy if not provided
+        if colors_rgba is None:
+            colors_rgba = self.color_policy.get_colors(
+                points_xy, visible, inst_kind, track_id, node_ids
+            )
+        
         # Flatten points for rendering
         n_inst, n_nodes, _ = points_xy.shape
         points_flat = points_xy.reshape(-1, 2)
         visible_flat = visible.reshape(-1)
+        colors_flat = colors_rgba.reshape(-1, 4)
         
-        # Filter visible points
-        visible_indices = np.where(visible_flat)[0]
+        # Filter points based on visibility mode
+        if self.color_policy.invisible_mode == "hide":
+            # Only include visible points
+            visible_indices = np.where(visible_flat)[0]
+        else:
+            # Include all points (invisible ones will be dimmed)
+            visible_indices = np.arange(len(points_flat))
+        
         if len(visible_indices) == 0:
             return
         
-        # Convert pixel coordinates to OpenGL coordinates (flip Y)
+        # Convert pixel coordinates to OpenGL coordinates (flip Y and shift for timeline)
         positions_3d = np.zeros((len(visible_indices), 3), dtype=np.float32)
         positions_3d[:, 0] = points_flat[visible_indices, 0]  # X stays the same
-        positions_3d[:, 1] = self.height - points_flat[visible_indices, 1]  # Flip Y
+        # Flip Y and shift up by timeline height
+        positions_3d[:, 1] = self.timeline_height + (self.height - points_flat[visible_indices, 1])
         positions_3d[:, 2] = 0  # Z = 0 for overlay (in front of background at z=-1)
         
         # Create points geometry and mesh
         self.points_geometry = gfx.Geometry(positions=positions_3d)
         
-        # Apply colors if provided
-        if colors_rgba is not None and colors_rgba.size > 0:
-            colors_flat = colors_rgba.reshape(-1, 4)
-            visible_colors = colors_flat[visible_indices].astype(np.float32)
-            # Create a Buffer for colors
-            colors_buffer = gfx.Buffer(visible_colors)
-            self.points_geometry.colors = colors_buffer
-            self.points_material.color_mode = "vertex"
-        else:
-            self.points_material.color_mode = "uniform"
-            self.points_material.color = (1, 0, 0, 1)  # Red
+        # Apply colors
+        visible_colors = colors_flat[visible_indices].astype(np.float32)
+        # Create a Buffer for colors
+        colors_buffer = gfx.Buffer(visible_colors)
+        self.points_geometry.colors = colors_buffer
+        self.points_material.color_mode = "vertex"
         
         self.points_mesh = gfx.Points(self.points_geometry, self.points_material)
         self.scene.add(self.points_mesh)
         
-        # Create lines for edges
+        # Create lines for edges with color support
         if edges is not None and edges.size > 0:
             line_positions = []
+            line_colors = []
             line_count = 0
             
             for inst_idx in range(n_inst):
                 inst_points = points_xy[inst_idx]
                 inst_visible = visible[inst_idx]
+                inst_colors = colors_rgba[inst_idx]
                 
                 for edge in edges:
                     node1, node2 = int(edge[0]), int(edge[1])
                     # Check bounds and visibility
                     if (node1 < len(inst_visible) and node2 < len(inst_visible)):
-                        if inst_visible[node1] and inst_visible[node2]:
+                        # Check visibility based on policy
+                        should_draw = False
+                        if self.color_policy.invisible_mode == "hide":
+                            # Only draw if both nodes are visible
+                            should_draw = inst_visible[node1] and inst_visible[node2]
+                        else:
+                            # Draw if at least one node exists (dimmed lines will show)
+                            should_draw = True
+                        
+                        if should_draw:
                             p1 = inst_points[node1]
                             p2 = inst_points[node2]
                             
-                            # Add line segment (flip Y coordinate)
+                            # Add line segment (flip Y coordinate and shift for timeline)
                             line_positions.extend([
-                                [float(p1[0]), float(self.height - p1[1]), 0],
-                                [float(p2[0]), float(self.height - p2[1]), 0]
+                                [float(p1[0]), float(self.timeline_height + self.height - p1[1]), 0],
+                                [float(p2[0]), float(self.timeline_height + self.height - p2[1]), 0]
                             ])
+                            
+                            # Use average color of the two nodes for the edge
+                            edge_color = (inst_colors[node1] + inst_colors[node2]) / 2.0
+                            line_colors.extend([edge_color, edge_color])
                             line_count += 1
             
             if line_count > 0:
                 line_positions = np.array(line_positions, dtype=np.float32)
+                line_colors = np.array(line_colors, dtype=np.float32)
+                
                 self.lines_geometry = gfx.Geometry(positions=line_positions)
+                # Add colors to lines
+                colors_buffer = gfx.Buffer(line_colors)
+                self.lines_geometry.colors = colors_buffer
+                
+                # Update line material to use vertex colors
+                self.lines_material.color_mode = "vertex"
+                
                 self.lines_mesh = gfx.Line(
                     self.lines_geometry,
                     self.lines_material
@@ -222,11 +282,15 @@ class Visualizer:
         color_by: str | Callable[..., np.ndarray] = "instance",
         colormap: str | Callable[..., np.ndarray] = "tab20",
         invisible_mode: Literal["dim", "hide"] = "dim",
+        dim_factor: float = 0.3,
     ) -> None:
         """Configure color mapping and invisible-point styling."""
-        self.color_by = color_by
-        self.colormap = colormap
-        self.invisible_mode = invisible_mode
+        self.color_policy = ColorPolicy(
+            color_by=color_by,
+            colormap=colormap,
+            invisible_mode=invisible_mode,
+            dim_factor=dim_factor
+        )
 
     def set_image_adjust(
         self,
@@ -236,16 +300,132 @@ class Visualizer:
         gamma: float = 1.0,
         tone_map: Literal["linear", "lut"] = "linear",
         lut: np.ndarray | None = None,
+        lut_mode: Literal["none", "histogram", "clahe", "gamma", "sigmoid"] = "none",
+        lut_params: dict | None = None,
     ) -> None:
-        """Configure brightness/contrast/gamma and optional LUT tone mapping."""
+        """Configure brightness/contrast/gamma and optional LUT tone mapping.
+        
+        Args:
+            gain: Contrast multiplier (default 1.0).
+            bias: Brightness offset (default 0.0).
+            gamma: Gamma correction value (default 1.0).
+            tone_map: Tone mapping mode ("linear" or "lut").
+            lut: Pre-computed 256x3 uint8 LUT array.
+            lut_mode: LUT generation mode if lut is None.
+            lut_params: Parameters for LUT generation (depends on mode).
+        """
         self.gain = gain
         self.bias = bias
         self.gamma = gamma
         self.tone_map = tone_map
         self.lut = lut
+        self.lut_mode = lut_mode
+        self.lut_params = lut_params or {}
+    
+    def _apply_image_adjustments(self, frame: np.ndarray) -> np.ndarray:
+        """Apply gain, bias, gamma, and optional LUT to frame data.
+        
+        Args:
+            frame: Normalized float32 frame data in range [0, 1] with shape (H, W, 3).
+            
+        Returns:
+            Adjusted frame data, still in range [0, 1].
+        """
+        # Apply gain and bias (contrast and brightness)
+        adjusted = frame * self.gain + self.bias
+        
+        # Apply gamma correction
+        if self.gamma != 1.0:
+            # Clamp to avoid negative values before gamma
+            adjusted = np.clip(adjusted, 0, 1)
+            adjusted = np.power(adjusted, 1.0 / self.gamma)
+        
+        # Apply tone mapping
+        if self.tone_map == "lut":
+            # Generate LUT if needed
+            if self.lut is None and self.lut_mode != "none":
+                self._generate_lut(frame)
+            
+            if self.lut is not None:
+                # Convert to uint8 indices for LUT lookup
+                indices = np.clip(adjusted * 255, 0, 255).astype(np.uint8)
+                # Apply LUT (assumed to be 256x3 uint8)
+                # Index each channel separately
+                result = np.zeros_like(frame)
+                for c in range(3):
+                    result[:, :, c] = self.lut[indices[:, :, c], c].astype(np.float32) / 255.0
+                adjusted = result
+        
+        # Final clamp to valid range
+        return np.clip(adjusted, 0, 1)
+    
+    def _generate_lut(self, frame: np.ndarray) -> None:
+        """Generate LUT based on current mode and parameters.
+        
+        Args:
+            frame: Current frame data for histogram-based methods.
+        """
+        # Convert frame to uint8 for LUT generation
+        frame_uint8 = np.clip(frame * 255, 0, 255).astype(np.uint8)
+        
+        if self.lut_mode == "histogram":
+            channel_mode = self.lut_params.get("channel_mode", "luminance")
+            self.lut = lut_module.generate_histogram_equalization_lut(
+                frame_uint8, channel_mode=channel_mode
+            )
+        elif self.lut_mode == "clahe":
+            clip_limit = self.lut_params.get("clip_limit", 2.0)
+            grid_size = self.lut_params.get("grid_size", (8, 8))
+            channel_mode = self.lut_params.get("channel_mode", "luminance")
+            self.lut = lut_module.generate_clahe_lut(
+                frame_uint8, clip_limit=clip_limit, 
+                grid_size=grid_size, channel_mode=channel_mode
+            )
+        elif self.lut_mode == "gamma":
+            gamma = self.lut_params.get("gamma", 2.2)
+            self.lut = lut_module.generate_gamma_lut(gamma)
+        elif self.lut_mode == "sigmoid":
+            midpoint = self.lut_params.get("midpoint", 0.5)
+            slope = self.lut_params.get("slope", 10.0)
+            self.lut = lut_module.generate_sigmoid_lut(midpoint, slope)
+        else:
+            self.lut = lut_module.generate_identity_lut()
+    
+    def update_lut(self, frame: np.ndarray | None = None) -> None:
+        """Update the LUT based on current mode and optionally a reference frame.
+        
+        Args:
+            frame: Optional frame to use for histogram-based LUT generation.
+                   If None, the LUT will be cleared.
+        """
+        if frame is not None and self.lut_mode != "none":
+            self._generate_lut(frame)
+        else:
+            self.lut = None
+    def set_timeline(self, timeline_view: TimelineView) -> None:
+        """Set the timeline view for rendering.
+        
+        Args:
+            timeline_view: The timeline view to render.
+        """
+        # Clear old timeline meshes
+        for mesh in self.timeline_meshes:
+            self.scene.remove(mesh)
+        self.timeline_meshes.clear()
+        
+        # Add timeline meshes to main scene
+        # Position them at the bottom of the canvas
+        for mesh in timeline_view.scene.children:
+            # Clone the mesh and adjust position
+            if hasattr(mesh, "local"):
+                # Timeline meshes are already positioned correctly in their own coord system
+                # We just need to ensure they're at the bottom of our canvas
+                self.scene.add(mesh)
+                self.timeline_meshes.append(mesh)
 
     def draw(self) -> None:
         """Render one frame to the current canvas or offscreen target."""
+        # Render everything in one pass
         self.renderer.render(self.scene, self.camera)
         
         if self.mode != "offscreen":
@@ -257,12 +437,16 @@ class Visualizer:
         Note: The returned array shape is (height, width, 3) which is standard
         for image arrays, even though the canvas was created with (width, height).
         """
-        # For offscreen mode, use canvas.draw() which returns the rendered image
-        if self.mode == "offscreen":
+        # For offscreen mode or notebook mode, use canvas.draw()
+        if self.mode in ("offscreen", "notebook"):
             image = np.asarray(self.canvas.draw())
         else:
-            # For onscreen, use snapshot
-            image = self.renderer.snapshot()
+            # For desktop mode, try to use snapshot
+            try:
+                image = self.renderer.snapshot()
+            except AttributeError:
+                # Fallback to canvas.draw() if snapshot not available
+                image = np.asarray(self.canvas.draw())
         
         # The image is RGBA, convert to RGB
         if image.shape[-1] == 4:

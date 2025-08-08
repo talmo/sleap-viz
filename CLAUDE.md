@@ -91,5 +91,5 @@ See `notes/progress.md` for detailed implementation status and `notes/` director
 
 ## Remember
 - Use context7 MCP to look up pygfx docs.
-- Feel free to write temp scripts, images, plots or whatever else needed to troubleshoot, but do so in the `scratch/` directory. For individual scratch investigations or tasks, create a subfolder called `scratch/YYYY-MM-DD-informative-name` with a `README.md` in it describing what the experiment is for. Later, update it with your findings. When running the scripts, run from the project root with `uv run scratch/.../test_script.py`
+- Feel free to write temp scripts, images, plots or whatever else needed to troubleshoot, but do so in the `scratch/` directory. For individual scratch investigations or tasks, create a subfolder called `scratch/YYYY-MM-DD-informative-name` with a `README.md` in it describing what the experiment is for. Later, update it with your findings and include images generated (embedded references to the image file so it renders in markdown). When running the scripts, run from the project root with `uv run scratch/.../test_script.py`
 - This is a very visual app. Use your vision capabilities whenever possible to check for graphical/rendering correctness.

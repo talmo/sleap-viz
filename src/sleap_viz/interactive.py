@@ -1,0 +1,555 @@
+"""Interactive controls for keyboard and mouse input."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from .controller import Controller
+
+
+class InteractiveControls:
+    """Handles keyboard and mouse events for the viewer.
+    
+    Keyboard shortcuts:
+    - Space: Play/pause
+    - Left/Right arrows: Previous/next frame
+    - Shift+Left/Right: Skip 10 frames
+    - Home/End: Go to start/end
+    - J/K: Frame step backward/forward (vim-style)
+    - L: Toggle loop mode
+    - 0-9: Set playback speed (0=10x, 1=1x, 2=2x, etc.)
+    - -/+: Decrease/increase playback speed
+    - B/Shift+B: Increase/decrease brightness
+    - C/Shift+C: Increase/decrease contrast
+    - G/Shift+G: Decrease/increase gamma
+    - R: Reset image adjustments
+    - T: Toggle tone mapping (linear/LUT)
+    - Shift+H: Toggle histogram equalization
+    - E: Toggle CLAHE (enhanced contrast)
+    - M: Cycle through LUT modes
+    - Z/Shift+Z: Zoom in/out timeline
+    - X: Reset timeline zoom
+    - A/D: Pan timeline left/right
+    - S: Clear selection
+    - P: Play selection (if selected)
+    - Q/Escape: Quit
+    
+    Mouse controls:
+    - Click on timeline: Jump to frame
+    - Drag on timeline: Scrub through frames
+    - Ctrl+Drag on timeline: Select range
+    - Shift+Drag on timeline: Pan timeline
+    - Mouse wheel on timeline: Zoom in/out
+    """
+    
+    def __init__(self, controller: Controller, canvas=None):
+        """Initialize interactive controls.
+        
+        Args:
+            controller: The Controller instance to control.
+            canvas: The render canvas to attach event handlers to.
+        """
+        self.controller = controller
+        self.canvas = canvas
+        self._handlers_attached = False
+        self._is_dragging = False
+        self._is_panning = False
+        self._is_selecting = False
+        self._selection_start_x = None
+        self._quit_callback: Callable[[], None] | None = None
+        
+    def attach_handlers(self) -> None:
+        """Attach event handlers to the canvas."""
+        if not self.canvas or self._handlers_attached:
+            return
+            
+        # Attach keyboard and mouse handlers
+        if hasattr(self.canvas, "add_event_handler"):
+            self.canvas.add_event_handler(self._on_key, "key_down")
+            self.canvas.add_event_handler(self._on_mouse_down, "pointer_down")
+            self.canvas.add_event_handler(self._on_mouse_move, "pointer_move")
+            self.canvas.add_event_handler(self._on_mouse_up, "pointer_up")
+            self.canvas.add_event_handler(self._on_wheel, "wheel")
+            self._handlers_attached = True
+            
+    def detach_handlers(self) -> None:
+        """Detach event handlers from the canvas."""
+        if not self.canvas or not self._handlers_attached:
+            return
+            
+        if hasattr(self.canvas, "remove_event_handler"):
+            self.canvas.remove_event_handler(self._on_key, "key_down")
+            self.canvas.remove_event_handler(self._on_mouse_down, "pointer_down")
+            self.canvas.remove_event_handler(self._on_mouse_move, "pointer_move")
+            self.canvas.remove_event_handler(self._on_mouse_up, "pointer_up")
+            self.canvas.remove_event_handler(self._on_wheel, "wheel")
+            self._handlers_attached = False
+            
+    def set_quit_callback(self, callback: Callable[[], None]) -> None:
+        """Set a callback to be called when quit is requested.
+        
+        Args:
+            callback: Function to call when Q or Escape is pressed.
+        """
+        self._quit_callback = callback
+    
+    def _adjust_image(self, param: str, delta: float) -> None:
+        """Adjust image parameter by delta.
+        
+        Args:
+            param: Parameter to adjust ('gain', 'bias', or 'gamma').
+            delta: Amount to adjust by.
+        """
+        if not hasattr(self.controller, 'visualizer'):
+            return
+            
+        vis = self.controller.visualizer
+        current_gain = vis.gain
+        current_bias = vis.bias
+        current_gamma = vis.gamma
+        
+        if param == "gain":
+            new_gain = max(0.1, min(5.0, current_gain + delta))
+            vis.set_image_adjust(gain=new_gain, bias=current_bias, gamma=current_gamma)
+            print(f"Contrast (gain): {new_gain:.1f}")
+        elif param == "bias":
+            new_bias = max(-1.0, min(1.0, current_bias + delta))
+            vis.set_image_adjust(gain=current_gain, bias=new_bias, gamma=current_gamma)
+            print(f"Brightness (bias): {new_bias:.1f}")
+        elif param == "gamma":
+            new_gamma = max(0.1, min(5.0, current_gamma + delta))
+            vis.set_image_adjust(gain=current_gain, bias=current_bias, gamma=new_gamma)
+            print(f"Gamma: {new_gamma:.1f}")
+        
+        # Trigger redraw by re-rendering current frame
+        asyncio.create_task(self.controller.goto(self.controller.current_frame))
+    
+    def _reset_image_adjustments(self) -> None:
+        """Reset all image adjustments to default values."""
+        if not hasattr(self.controller, 'visualizer'):
+            return
+            
+        self.controller.visualizer.set_image_adjust(
+            gain=1.0, bias=0.0, gamma=1.0, tone_map="linear", 
+            lut_mode="none", lut=None
+        )
+        print("Image adjustments reset")
+        
+        # Trigger redraw by re-rendering current frame
+        asyncio.create_task(self.controller.goto(self.controller.current_frame))
+    
+    def _toggle_tone_map(self) -> None:
+        """Toggle between linear and LUT tone mapping."""
+        if not hasattr(self.controller, 'visualizer'):
+            return
+        
+        vis = self.controller.visualizer
+        new_mode = "lut" if vis.tone_map == "linear" else "linear"
+        
+        vis.set_image_adjust(
+            gain=vis.gain, bias=vis.bias, gamma=vis.gamma,
+            tone_map=new_mode, lut=vis.lut, lut_mode=vis.lut_mode,
+            lut_params=vis.lut_params
+        )
+        print(f"Tone mapping: {new_mode}")
+        
+        # Trigger redraw
+        asyncio.create_task(self.controller.goto(self.controller.current_frame))
+    
+    def _set_lut_mode(self, mode: str) -> None:
+        """Set a specific LUT mode.
+        
+        Args:
+            mode: LUT mode to set (none, histogram, clahe, gamma, sigmoid).
+        """
+        if not hasattr(self.controller, 'visualizer'):
+            return
+        
+        vis = self.controller.visualizer
+        
+        # If we're toggling the same mode, turn it off
+        if vis.lut_mode == mode:
+            mode = "none"
+            tone_map = "linear"
+        else:
+            tone_map = "lut"
+        
+        # Clear existing LUT to force regeneration
+        vis.lut = None
+        
+        vis.set_image_adjust(
+            gain=vis.gain, bias=vis.bias, gamma=vis.gamma,
+            tone_map=tone_map, lut=None, lut_mode=mode,
+            lut_params=vis.lut_params
+        )
+        print(f"LUT mode: {mode}")
+        
+        # Trigger redraw
+        asyncio.create_task(self.controller.goto(self.controller.current_frame))
+    
+    def _cycle_lut_mode(self) -> None:
+        """Cycle through available LUT modes."""
+        if not hasattr(self.controller, 'visualizer'):
+            return
+        
+        vis = self.controller.visualizer
+        modes = ["none", "histogram", "clahe", "gamma", "sigmoid"]
+        
+        # Find current mode index and cycle to next
+        current_idx = modes.index(vis.lut_mode) if vis.lut_mode in modes else 0
+        next_idx = (current_idx + 1) % len(modes)
+        next_mode = modes[next_idx]
+        
+        # Set tone_map based on mode
+        tone_map = "linear" if next_mode == "none" else "lut"
+        
+        # Clear existing LUT to force regeneration
+        vis.lut = None
+        
+        vis.set_image_adjust(
+            gain=vis.gain, bias=vis.bias, gamma=vis.gamma,
+            tone_map=tone_map, lut=None, lut_mode=next_mode,
+            lut_params=vis.lut_params
+        )
+        print(f"LUT mode: {next_mode}")
+        
+        # Trigger redraw
+        asyncio.create_task(self.controller.goto(self.controller.current_frame))
+    
+    def _save_config(self) -> None:
+        """Save current viewer settings to default config."""
+        try:
+            from .config import ConfigManager, get_current_config
+            
+            if not hasattr(self.controller, 'vis'):
+                # Try alternate attribute names
+                vis = getattr(self.controller, 'visualizer', None)
+                if vis is None:
+                    vis = getattr(self.controller, 'viz', None)
+                if vis is None:
+                    print("Unable to access visualizer for config save")
+                    return
+            else:
+                vis = self.controller.vis
+            
+            config_manager = ConfigManager()
+            current_config = get_current_config(self.controller, vis)
+            saved_path = config_manager.save_config(current_config)
+            print(f"Config saved to: {saved_path}")
+        except Exception as e:
+            print(f"Failed to save config: {e}")
+    
+    def _load_config(self) -> None:
+        """Load viewer settings from default config."""
+        try:
+            from .config import ConfigManager, apply_config
+            
+            if not hasattr(self.controller, 'vis'):
+                # Try alternate attribute names
+                vis = getattr(self.controller, 'visualizer', None)
+                if vis is None:
+                    vis = getattr(self.controller, 'viz', None)
+                if vis is None:
+                    print("Unable to access visualizer for config load")
+                    return
+            else:
+                vis = self.controller.vis
+            
+            config_manager = ConfigManager()
+            loaded_config = config_manager.load_config()
+            apply_config(loaded_config, self.controller, vis)
+            print("Config loaded from default settings")
+            
+            # Trigger redraw
+            asyncio.create_task(self.controller.goto(self.controller.current_frame))
+        except Exception as e:
+            print(f"Failed to load config: {e}")
+            
+    def _on_key(self, event) -> None:
+        """Handle keyboard events.
+        
+        Args:
+            event: The keyboard event.
+        """
+        key = event.get("key", "")
+        modifiers = event.get("modifiers", [])
+        
+        # Create async task for controller methods
+        loop = asyncio.get_event_loop()
+        
+        # Play/pause
+        if key == " ":
+            loop.create_task(self.controller.toggle_play_pause())
+            
+        # Frame navigation
+        elif key == "ArrowLeft":
+            if "Shift" in modifiers:
+                loop.create_task(self.controller.skip_frames(-10))
+            else:
+                loop.create_task(self.controller.prev_frame())
+                
+        elif key == "ArrowRight":
+            if "Shift" in modifiers:
+                loop.create_task(self.controller.skip_frames(10))
+            else:
+                loop.create_task(self.controller.next_frame())
+                
+        # Vim-style navigation
+        elif key == "j":
+            loop.create_task(self.controller.prev_frame())
+        elif key == "k":
+            loop.create_task(self.controller.next_frame())
+            
+        # Jump to start/end
+        elif key == "Home":
+            loop.create_task(self.controller.goto_start())
+        elif key == "End":
+            loop.create_task(self.controller.goto_end())
+            
+        # Loop mode
+        elif key == "l":
+            self.controller.loop = not self.controller.loop
+            print(f"Loop mode: {'on' if self.controller.loop else 'off'}")
+            
+        # Playback speed with number keys
+        elif key in "0123456789":
+            speed = 10.0 if key == "0" else float(key)
+            self.controller.set_playback_speed(speed)
+            print(f"Playback speed: {speed}x")
+            
+        # Adjust speed
+        elif key == "-" or key == "_":
+            new_speed = max(0.1, self.controller.playback_speed - 0.5)
+            self.controller.set_playback_speed(new_speed)
+            print(f"Playback speed: {new_speed}x")
+            
+        elif key == "=" or key == "+":
+            new_speed = min(10.0, self.controller.playback_speed + 0.5)
+            self.controller.set_playback_speed(new_speed)
+            print(f"Playback speed: {new_speed}x")
+            
+        # Image adjustments
+        elif key == "b":
+            # Increase brightness (bias)
+            if "Shift" in modifiers:
+                self._adjust_image("bias", -0.1)
+            else:
+                self._adjust_image("bias", 0.1)
+                
+        elif key == "c":
+            # Increase contrast (gain)
+            if "Shift" in modifiers:
+                self._adjust_image("gain", -0.2)
+            else:
+                self._adjust_image("gain", 0.2)
+                
+        elif key == "g":
+            # Adjust gamma
+            if "Shift" in modifiers:
+                self._adjust_image("gamma", 0.1)
+            else:
+                self._adjust_image("gamma", -0.1)
+                
+        elif key == "r":
+            # Reset image adjustments
+            self._reset_image_adjustments()
+        
+        elif key == "t":
+            # Toggle tone mapping mode (linear vs LUT)
+            self._toggle_tone_map()
+        
+        elif key == "h" and "Shift" in modifiers:
+            # Toggle histogram equalization
+            self._set_lut_mode("histogram")
+        
+        elif key == "e":
+            # Toggle CLAHE (enhanced contrast)
+            self._set_lut_mode("clahe")
+        
+        elif key == "m":
+            # Cycle through LUT modes
+            self._cycle_lut_mode()
+            
+        # Timeline zoom/pan controls
+        elif key == "z":
+            # Zoom timeline
+            if hasattr(self.controller, 'timeline_controller'):
+                if "Shift" in modifiers:
+                    self.controller.timeline_controller.zoom_out()
+                else:
+                    self.controller.timeline_controller.zoom_in()
+                    
+        elif key == "x":
+            # Reset timeline zoom
+            if hasattr(self.controller, 'timeline_controller'):
+                self.controller.timeline_controller.reset_zoom()
+                
+        elif key == "a":
+            # Pan timeline left
+            if hasattr(self.controller, 'timeline_controller'):
+                visible = self.controller.timeline_controller.model.frame_max - self.controller.timeline_controller.model.frame_min
+                pan_amount = max(1, visible // 10)  # Pan by 10% of visible range
+                self.controller.timeline_controller.model.pan(-pan_amount)
+                self.controller.timeline_controller.request_update()
+                
+        elif key == "d":
+            # Pan timeline right
+            if hasattr(self.controller, 'timeline_controller'):
+                visible = self.controller.timeline_controller.model.frame_max - self.controller.timeline_controller.model.frame_min
+                pan_amount = max(1, visible // 10)  # Pan by 10% of visible range
+                self.controller.timeline_controller.model.pan(pan_amount)
+                self.controller.timeline_controller.request_update()
+                
+        elif key == "s":
+            # Clear selection
+            if hasattr(self.controller, 'timeline_controller'):
+                self.controller.timeline_controller.set_selection(None, None)
+                print("Selection cleared")
+                
+        elif key == "p":
+            # Play selection
+            if hasattr(self.controller, 'timeline_controller'):
+                model = self.controller.timeline_controller.model
+                if model.selection_start is not None and model.selection_end is not None:
+                    # Jump to start of selection and play
+                    loop.create_task(self.controller.goto(model.selection_start))
+                    # Set up playback to stop at end of selection
+                    print(f"Playing selection: frames {model.selection_start} to {model.selection_end}")
+                    # Note: Full implementation would require modifying Controller to support play range
+                else:
+                    print("No selection to play")
+        
+        # Config operations
+        elif key == "f" and "Control" in modifiers and "Shift" in modifiers:
+            # Ctrl+Shift+F: Save config
+            self._save_config()
+        elif key == "o" and "Control" in modifiers and "Shift" in modifiers:
+            # Ctrl+Shift+O: Load config
+            self._load_config()
+            
+        # Quit
+        elif key == "q" or key == "Escape":
+            if self._quit_callback:
+                self._quit_callback()
+            else:
+                print("Quit requested")
+                
+    def _on_mouse_down(self, event) -> None:
+        """Handle mouse down events.
+        
+        Args:
+            event: The mouse event.
+        """
+        # Check if click is on timeline (bottom portion of window)
+        x = event.get("x", 0)
+        y = event.get("y", 0)
+        modifiers = event.get("modifiers", [])
+        
+        if hasattr(self.canvas, "get_logical_size"):
+            width, height = self.canvas.get_logical_size()
+            
+            # Timeline is in bottom 50 pixels (timeline height)
+            # Note: pygfx Y coordinates are from top, so timeline is at height - 50
+            if y > height - 50:
+                if "Control" in modifiers and hasattr(self.controller, 'timeline_controller'):
+                    # Start range selection
+                    self._is_selecting = True
+                    self._selection_start_x = x
+                    # Clear existing selection
+                    self.controller.timeline_controller.set_selection(None, None)
+                elif "Shift" in modifiers and hasattr(self.controller, 'timeline_controller'):
+                    # Start panning
+                    self._is_panning = True
+                    self.controller.timeline_controller.start_pan(x)
+                else:
+                    # Start dragging for seeking
+                    self._is_dragging = True
+                    # Adjust x coordinate for timeline (timeline uses full width)
+                    self._handle_timeline_interaction(x, width)
+                
+    def _on_mouse_move(self, event) -> None:
+        """Handle mouse move events.
+        
+        Args:
+            event: The mouse event.
+        """
+        x = event.get("x", 0)
+        
+        if self._is_selecting and hasattr(self.controller, 'timeline_controller'):
+            # Update selection range
+            if self._selection_start_x is not None:
+                start_frame, end_frame = self.controller.timeline_controller.handle_drag(
+                    self._selection_start_x, x
+                )
+                self.controller.timeline_controller.set_selection(start_frame, end_frame)
+        elif self._is_panning and hasattr(self.controller, 'timeline_controller'):
+            # Update pan
+            self.controller.timeline_controller.update_pan(x)
+        elif self._is_dragging:
+            # Continue dragging for seeking
+            if hasattr(self.canvas, "get_logical_size"):
+                width, _ = self.canvas.get_logical_size()
+                self._handle_timeline_interaction(x, width)
+            
+    def _on_mouse_up(self, event) -> None:
+        """Handle mouse up events.
+        
+        Args:
+            event: The mouse event.
+        """
+        if self._is_selecting:
+            self._is_selecting = False
+            self._selection_start_x = None
+            # Selection is already set in _on_mouse_move
+            if hasattr(self.controller, 'timeline_controller'):
+                selection = self.controller.timeline_controller.model
+                if selection.selection_start is not None and selection.selection_end is not None:
+                    print(f"Selected frames {selection.selection_start} to {selection.selection_end}")
+        elif self._is_panning and hasattr(self.controller, 'timeline_controller'):
+            self.controller.timeline_controller.end_pan()
+        self._is_dragging = False
+        self._is_panning = False
+        
+    def _handle_timeline_interaction(self, x: float, width: float) -> None:
+        """Handle timeline click or drag.
+        
+        Args:
+            x: X coordinate of the click/drag.
+            width: Width of the canvas.
+        """
+        if hasattr(self.controller, 'timeline_controller'):
+            # Use timeline controller to handle click with zoom support
+            target_frame = self.controller.timeline_controller.handle_click(x, 0)
+        else:
+            # Fallback to simple calculation
+            frame_ratio = x / width
+            target_frame = int(frame_ratio * self.controller.total_frames)
+            target_frame = max(0, min(target_frame, self.controller.total_frames - 1))
+        
+        # Jump to frame
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.controller.goto(target_frame))
+    
+    def _on_wheel(self, event) -> None:
+        """Handle mouse wheel events.
+        
+        Args:
+            event: The wheel event.
+        """
+        if not hasattr(self.controller, 'timeline_controller'):
+            return
+            
+        # Check if wheel is on timeline
+        x = event.get("x", 0)
+        y = event.get("y", 0)
+        dy = event.get("dy", 0)  # Wheel delta
+        
+        if hasattr(self.canvas, "get_logical_size"):
+            width, height = self.canvas.get_logical_size()
+            
+            # Timeline is in bottom 50 pixels
+            if y > height - 50:
+                # Handle zoom on timeline
+                self.controller.timeline_controller.handle_wheel(-dy, x)

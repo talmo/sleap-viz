@@ -146,3 +146,21 @@ class AnnotationSource:
             "labels": [str(getattr(inst, "track", "")) for inst in insts],
             "skeleton_id": id(skel),
         }
+    
+    def get_frame_data_simple(self, frame_idx: int) -> sio.LabeledFrame | None:
+        """Get labeled frame by index, searching across all videos.
+        
+        Args:
+            frame_idx: Frame index to get.
+            
+        Returns:
+            LabeledFrame or None if not found.
+        """
+        # Try to find frame in any video
+        for video in self.labels.videos:
+            try:
+                lf = self.labels[(video, frame_idx)]
+                return lf
+            except:
+                continue
+        return None
