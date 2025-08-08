@@ -325,8 +325,14 @@ def main(
             _eprint("Tone mapping: T=toggle, Shift+H=histogram, E=CLAHE, M=cycle modes")
             _eprint("Config: Ctrl+Shift+F=save, Ctrl+Shift+O=load")
             
-            # Keep running until quit is requested
-            await stop_event.wait()
+            # Keep running until quit is requested or window is closed
+            while not stop_event.is_set():
+                # Check if window was closed
+                if vis.canvas.is_closed():
+                    _eprint("[sleap-viz] Window closed.")
+                    break
+                # Small sleep to prevent busy waiting
+                await asyncio.sleep(0.1)
             
             # Clean up
             await controller.stop()
