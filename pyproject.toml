@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sleap-viz"
+version = "0.0.1"
+description = "Fast, interactive visualization of SLEAP pose data (.slp) with pygfx/wgpu"
+authors = [{ name = "Talmo Lab" }]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["sleap", "pose", "visualization", "pygfx", "wgpu", "webgpu"]
+
+dependencies = [
+    "numpy>=1.24",
+    "click>=8.1",
+    "pygfx>=0.12", # adjust as needed
+    "wgpu>=0.12", # adjust as needed
+    "jupyter_rfb>=0.4", # used in v1, harmless dep
+    "sleap-io>=0.0.9", # adjust to your current version
+    "glfw>=2.9.0",
+    "pillow>=11.3.0",
+]
+
+[project.optional-dependencies]
+notebook = ["jupyterlab>=4.0"]
+
+[project.scripts]
+sleap-viz = "sleap_viz.cli:main"
+
+[tool.uv]
+# Nothing required; uv will read PEP 621 metadata above.
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E","F","W","I","D","UP","B","SIM","C4","TID"]
+ignore = ["D100","D104","D203","D213","D401"]
+# D100,D104: missing docstrings for package/module during scaffold
+# D203,D213: prefer Google-style section spacing
+# D401: allow non-imperative summary in some cases
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]
