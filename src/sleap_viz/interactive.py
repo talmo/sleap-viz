@@ -112,10 +112,10 @@ class InteractiveControls:
             param: Parameter to adjust ('gain', 'bias', or 'gamma').
             delta: Amount to adjust by.
         """
-        if not hasattr(self.controller, 'visualizer'):
+        if not hasattr(self.controller, 'vis'):
             return
             
-        vis = self.controller.visualizer
+        vis = self.controller.vis
         current_gain = vis.gain
         current_bias = vis.bias
         current_gamma = vis.gamma
@@ -138,10 +138,10 @@ class InteractiveControls:
     
     def _reset_image_adjustments(self) -> None:
         """Reset all image adjustments to default values."""
-        if not hasattr(self.controller, 'visualizer'):
+        if not hasattr(self.controller, 'vis'):
             return
             
-        self.controller.visualizer.set_image_adjust(
+        self.controller.vis.set_image_adjust(
             gain=1.0, bias=0.0, gamma=1.0, tone_map="linear", 
             lut_mode="none", lut=None
         )
@@ -152,10 +152,10 @@ class InteractiveControls:
     
     def _toggle_tone_map(self) -> None:
         """Toggle between linear and LUT tone mapping."""
-        if not hasattr(self.controller, 'visualizer'):
+        if not hasattr(self.controller, 'vis'):
             return
         
-        vis = self.controller.visualizer
+        vis = self.controller.vis
         new_mode = "lut" if vis.tone_map == "linear" else "linear"
         
         vis.set_image_adjust(
@@ -174,10 +174,10 @@ class InteractiveControls:
         Args:
             mode: LUT mode to set (none, histogram, clahe, gamma, sigmoid).
         """
-        if not hasattr(self.controller, 'visualizer'):
+        if not hasattr(self.controller, 'vis'):
             return
         
-        vis = self.controller.visualizer
+        vis = self.controller.vis
         
         # If we're toggling the same mode, turn it off
         if vis.lut_mode == mode:
@@ -201,10 +201,10 @@ class InteractiveControls:
     
     def _cycle_lut_mode(self) -> None:
         """Cycle through available LUT modes."""
-        if not hasattr(self.controller, 'visualizer'):
+        if not hasattr(self.controller, 'vis'):
             return
         
-        vis = self.controller.visualizer
+        vis = self.controller.vis
         modes = ["none", "histogram", "clahe", "gamma", "sigmoid"]
         
         # Find current mode index and cycle to next
@@ -233,16 +233,10 @@ class InteractiveControls:
         try:
             from .config import ConfigManager, get_current_config
             
-            if not hasattr(self.controller, 'vis'):
-                # Try alternate attribute names
-                vis = getattr(self.controller, 'visualizer', None)
-                if vis is None:
-                    vis = getattr(self.controller, 'viz', None)
-                if vis is None:
-                    print("Unable to access visualizer for config save")
-                    return
-            else:
-                vis = self.controller.vis
+            vis = getattr(self.controller, 'vis', None)
+            if vis is None:
+                print("Unable to access visualizer for config save")
+                return
             
             config_manager = ConfigManager()
             current_config = get_current_config(self.controller, vis)
@@ -256,16 +250,10 @@ class InteractiveControls:
         try:
             from .config import ConfigManager, apply_config
             
-            if not hasattr(self.controller, 'vis'):
-                # Try alternate attribute names
-                vis = getattr(self.controller, 'visualizer', None)
-                if vis is None:
-                    vis = getattr(self.controller, 'viz', None)
-                if vis is None:
-                    print("Unable to access visualizer for config load")
-                    return
-            else:
-                vis = self.controller.vis
+            vis = getattr(self.controller, 'vis', None)
+            if vis is None:
+                print("Unable to access visualizer for config load")
+                return
             
             config_manager = ConfigManager()
             loaded_config = config_manager.load_config()
@@ -625,8 +613,8 @@ class InteractiveControls:
             return
         
         # Update renderer to highlight the selected point
-        if hasattr(self.controller, 'visualizer'):
-            vis = self.controller.visualizer
+        if hasattr(self.controller, 'vis'):
+            vis = self.controller.vis
             # Store selection for renderer to use
             vis.selected_instance = self._selected_pick.instance_id
             vis.selected_node = self._selected_pick.node_id
