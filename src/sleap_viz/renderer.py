@@ -96,6 +96,12 @@ class Visualizer:
             colormap="tab20",
             invisible_mode="dim"
         )
+        
+        # Selection state for highlighting
+        self.selected_instance = -1
+        self.selected_node = -1
+        self.hovered_instance = -1
+        self.hovered_node = -1
 
     def set_frame_image(self, frame: Frame) -> None:
         """Upload/replace the background texture with the given frame."""
@@ -209,8 +215,23 @@ class Visualizer:
         # Create points geometry and mesh
         self.points_geometry = gfx.Geometry(positions=positions_3d)
         
-        # Apply colors
+        # Apply colors with highlighting
         visible_colors = colors_flat[visible_indices].astype(np.float32)
+        
+        # Apply highlight for selected/hovered points
+        for i, idx in enumerate(visible_indices):
+            inst_idx = idx // n_nodes
+            node_idx = idx % n_nodes
+            
+            # Check if this point is selected
+            if inst_idx == self.selected_instance and node_idx == self.selected_node:
+                # Highlight selected point (make brighter/add outline)
+                visible_colors[i] = np.array([1.0, 1.0, 0.0, 1.0])  # Yellow for selection
+            elif inst_idx == self.hovered_instance and node_idx == self.hovered_node:
+                # Highlight hovered point
+                visible_colors[i] = visible_colors[i] * 1.5  # Brighten
+                visible_colors[i] = np.clip(visible_colors[i], 0, 1)
+        
         # Create a Buffer for colors
         colors_buffer = gfx.Buffer(visible_colors)
         self.points_geometry.colors = colors_buffer

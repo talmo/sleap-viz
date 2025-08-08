@@ -326,6 +326,25 @@ All MVP features have been implemented:
 - ✅ Created comprehensive test suite for config module
 - All v1 features now complete!
 
+### 2025-01-08 (Session 14)
+- ✅ Implemented GPU picking for point selection (post-v1 feature):
+  - Created `picking.py` module with ID buffer rendering approach
+  - Instance/node IDs encoded as RGBA colors for GPU picking
+  - Offscreen rendering to ID buffer for O(1) picking performance
+- ✅ Integrated picking with interactive controls:
+  - Mouse hover detection with tooltips
+  - Click to select points
+  - Selected points highlighted in yellow
+  - Hovered points brightened
+- ✅ Added selection highlighting to renderer:
+  - Tracks selected/hovered instance and node IDs
+  - Dynamic color updates for visual feedback
+- ✅ Created comprehensive test suite:
+  - Basic picking test validates coordinate accuracy
+  - Radius picking for multi-point selection
+  - All test cases passing
+- GPU picking feature fully functional and integrated!
+
 ---
 
 *This document should be updated after each development session to track progress*

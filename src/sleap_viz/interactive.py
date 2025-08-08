@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     from .controller import Controller
+    from .picking import GPUPicker, PickingResult
 
 
 class InteractiveControls:
@@ -42,23 +43,32 @@ class InteractiveControls:
     - Ctrl+Drag on timeline: Select range
     - Shift+Drag on timeline: Pan timeline
     - Mouse wheel on timeline: Zoom in/out
+    - Hover over points: Show tooltip with node name
+    - Click on points: Select point
     """
     
-    def __init__(self, controller: Controller, canvas=None):
+    def __init__(self, controller: Controller, canvas=None, picker: Optional[GPUPicker] = None):
         """Initialize interactive controls.
         
         Args:
             controller: The Controller instance to control.
             canvas: The render canvas to attach event handlers to.
+            picker: Optional GPU picker for point selection.
         """
         self.controller = controller
         self.canvas = canvas
+        self.picker = picker
         self._handlers_attached = False
         self._is_dragging = False
         self._is_panning = False
         self._is_selecting = False
         self._selection_start_x = None
         self._quit_callback: Callable[[], None] | None = None
+        
+        # Picking state
+        self._hovered_pick: Optional[PickingResult] = None
+        self._selected_pick: Optional[PickingResult] = None
+        self._tooltip_element = None
         
     def attach_handlers(self) -> None:
         """Attach event handlers to the canvas."""
@@ -442,7 +452,6 @@ class InteractiveControls:
         Args:
             event: The mouse event.
         """
-        # Check if click is on timeline (bottom portion of window)
         x = event.get("x", 0)
         y = event.get("y", 0)
         modifiers = event.get("modifiers", [])
@@ -468,6 +477,16 @@ class InteractiveControls:
                     self._is_dragging = True
                     # Adjust x coordinate for timeline (timeline uses full width)
                     self._handle_timeline_interaction(x, width)
+            else:
+                # Check for point picking in main view
+                if self.picker:
+                    pick_result = self.picker.pick(x, y)
+                    if pick_result.is_valid:
+                        self._selected_pick = pick_result
+                        print(f"Selected: Instance {pick_result.instance_id}, "
+                              f"Node {pick_result.node_id} ({pick_result.node_name})")
+                        # Update visualization to highlight selected point
+                        self._update_selection_highlight()
                 
     def _on_mouse_move(self, event) -> None:
         """Handle mouse move events.
@@ -476,6 +495,24 @@ class InteractiveControls:
             event: The mouse event.
         """
         x = event.get("x", 0)
+        y = event.get("y", 0)
+        
+        # Check for hover over points (if not dragging)
+        if not self._is_dragging and not self._is_selecting and not self._is_panning:
+            if self.picker and hasattr(self.canvas, "get_logical_size"):
+                width, height = self.canvas.get_logical_size()
+                # Only check for hover if not over timeline
+                if y <= height - 50:
+                    pick_result = self.picker.pick(x, y)
+                    if pick_result.is_valid != (self._hovered_pick and self._hovered_pick.is_valid):
+                        # Hover state changed
+                        self._hovered_pick = pick_result
+                        if pick_result.is_valid:
+                            # Show tooltip
+                            self._show_tooltip(pick_result)
+                        else:
+                            # Hide tooltip
+                            self._hide_tooltip()
         
         if self._is_selecting and hasattr(self.controller, 'timeline_controller'):
             # Update selection range
@@ -553,3 +590,46 @@ class InteractiveControls:
             if y > height - 50:
                 # Handle zoom on timeline
                 self.controller.timeline_controller.handle_wheel(-dy, x)
+    
+    def _show_tooltip(self, pick_result: PickingResult) -> None:
+        """Show tooltip for hovered point.
+        
+        Args:
+            pick_result: The picking result with point information.
+        """
+        if pick_result.node_name:
+            tooltip_text = f"{pick_result.node_name}"
+        else:
+            tooltip_text = f"Node {pick_result.node_id}"
+        
+        # Add instance info if multiple instances
+        if hasattr(self.controller, 'annotation_source'):
+            frame_data = self.controller.annotation_source.get_frame_data(
+                self.controller.current_frame
+            )
+            if frame_data and len(frame_data.instances) > 1:
+                tooltip_text = f"Instance {pick_result.instance_id}: {tooltip_text}"
+        
+        # For now, just print to console
+        # TODO: Implement actual tooltip rendering
+        print(f"Hover: {tooltip_text}")
+    
+    def _hide_tooltip(self) -> None:
+        """Hide the tooltip."""
+        # TODO: Implement actual tooltip hiding
+        pass
+    
+    def _update_selection_highlight(self) -> None:
+        """Update visualization to highlight selected point."""
+        if not self._selected_pick:
+            return
+        
+        # Update renderer to highlight the selected point
+        if hasattr(self.controller, 'visualizer'):
+            vis = self.controller.visualizer
+            # Store selection for renderer to use
+            vis.selected_instance = self._selected_pick.instance_id
+            vis.selected_node = self._selected_pick.node_id
+            
+            # Trigger redraw
+            asyncio.create_task(self.controller.goto(self.controller.current_frame))
