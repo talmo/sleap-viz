@@ -54,3 +54,6 @@ scratch/
 
 # uv
 .python-version
+
+# MCP config
+.mcp.json
