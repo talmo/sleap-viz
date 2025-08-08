@@ -165,6 +165,9 @@ class Visualizer:
         
         # Add to scene as background
         self.scene.add(self.video_mesh)
+        
+        # Apply current zoom/pan
+        self._update_camera()
 
     def set_overlay(
         self,
@@ -247,6 +250,11 @@ class Visualizer:
         self.points_mesh = gfx.Points(self.points_geometry, self.points_material)
         self.scene.add(self.points_mesh)
         
+        # Apply zoom/pan transform
+        if self.zoom_level != 1.0 or self.pan_x != 0 or self.pan_y != 0:
+            self.points_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
+            self.points_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)
+        
         # Create lines for edges with color support
         if edges is not None and edges.size > 0:
             line_positions = []
@@ -303,6 +311,11 @@ class Visualizer:
                     self.lines_material
                 )
                 self.scene.add(self.lines_mesh)
+                
+                # Apply zoom/pan transform
+                if self.zoom_level != 1.0 or self.pan_x != 0 or self.pan_y != 0:
+                    self.lines_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
+                    self.lines_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)
 
     def set_color_policy(
         self,
@@ -553,18 +566,24 @@ class Visualizer:
     
     def _update_camera(self) -> None:
         """Update camera based on current zoom and pan."""
-        # Calculate visible rectangle based on zoom and pan
-        half_width = self._base_width / (2 * self.zoom_level)
-        half_height = self.total_height / (2 * self.zoom_level)
+        # Apply zoom/pan by transforming the video mesh instead of the camera
+        # This keeps the timeline fixed
+        if self.video_mesh:
+            # Scale the video mesh
+            self.video_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
+            
+            # Position the video mesh with pan offset
+            self.video_mesh.local.position = (
+                self.width / 2 + self.pan_x * self.zoom_level,
+                self.timeline_height + self.height / 2 + self.pan_y * self.zoom_level,
+                -1
+            )
         
-        center_x = self._base_width / 2 + self.pan_x
-        center_y = self.total_height / 2 + self.pan_y
-        
-        # Update camera to show the zoomed/panned rectangle
-        self.camera.show_rect(
-            center_x - half_width,
-            center_x + half_width,
-            center_y - half_height,
-            center_y + half_height,
-            depth=10
-        )
+        # Also scale and position the overlay meshes
+        if self.points_mesh:
+            self.points_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
+            self.points_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)
+            
+        if self.lines_mesh:
+            self.lines_mesh.local.scale = (self.zoom_level, self.zoom_level, 1)
+            self.lines_mesh.local.position = (self.pan_x * self.zoom_level, self.pan_y * self.zoom_level, 0)

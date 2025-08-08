@@ -525,10 +525,11 @@ class InteractiveControls:
             if self._pan_start_x is not None and hasattr(self.controller, 'vis'):
                 dx = x - self._pan_start_x
                 dy = y - self._pan_start_y
-                # Pan is inverted (drag right to move view left)
+                # Pan X is inverted (drag right to move view left)
+                # Pan Y is NOT inverted (drag down to move view down)
                 self.controller.vis.set_pan(
                     self._pan_start_vis_x - dx,
-                    self._pan_start_vis_y - dy
+                    self._pan_start_vis_y + dy  # Changed from minus to plus
                 )
                 self.controller.vis.draw()
         # Check for hover over points (if not dragging)
@@ -619,6 +620,10 @@ class InteractiveControls:
         x = event.get("x", 0)
         y = event.get("y", 0)
         dy = event.get("dy", 0)  # Wheel delta
+        modifiers = event.get("modifiers", [])
+        
+        # Check if this is a pinch gesture (Ctrl + wheel on many systems)
+        is_pinch = "Control" in modifiers
         
         if hasattr(self.canvas, "get_logical_size"):
             width, height = self.canvas.get_logical_size()
@@ -630,10 +635,21 @@ class InteractiveControls:
                     self.controller.timeline_controller.handle_wheel(-dy, x)
             else:
                 # Handle zoom on video
-                if dy > 0:
-                    self._zoom_video_out(center_x=x, center_y=y)
-                elif dy < 0:
-                    self._zoom_video_in(center_x=x, center_y=y)
+                # For pinch (Ctrl+wheel), use smaller zoom factor for smoother control
+                if is_pinch:
+                    # Pinch zoom - use direct scale factor
+                    if dy != 0 and hasattr(self.controller, 'vis'):
+                        scale = 1.0 - dy * 0.01  # Smaller factor for smoother zoom
+                        current_zoom = self.controller.vis.zoom_level
+                        self.controller.vis.set_zoom(current_zoom * scale, x, y)
+                        self.controller.vis.draw()
+                        print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
+                else:
+                    # Regular mouse wheel zoom
+                    if dy > 0:
+                        self._zoom_video_out(center_x=x, center_y=y)
+                    elif dy < 0:
+                        self._zoom_video_in(center_x=x, center_y=y)
     
     def _show_tooltip(self, pick_result: PickingResult) -> None:
         """Show tooltip for hovered point.
