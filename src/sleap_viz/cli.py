@@ -336,7 +336,13 @@ def main(
             
             # Clean up
             await controller.stop()
-            controls.detach_handlers()
+            
+            # Only detach handlers if canvas is still open
+            if not vis.canvas.is_closed():
+                controls.detach_handlers()
+                # Close the canvas properly to avoid GLFW errors
+                vis.canvas.close()
+            
             _eprint("[sleap-viz] Viewer closed.")
 
     asyncio.run(_run())
