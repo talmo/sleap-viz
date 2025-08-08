@@ -162,26 +162,33 @@ async def export_key_frames(
 
 async def main():
     """Run batch export examples."""
-    # Example 1: Export frames at regular intervals
-    labels_path = Path("path/to/your/labels.slp")
+    import argparse
+    parser = argparse.ArgumentParser(description="Batch export example")
+    parser.add_argument(
+        "labels_path",
+        nargs="?",
+        default="tests/fixtures/centered_pair_predictions.slp",
+        help="Path to SLEAP labels file (.slp)",
+    )
+    args = parser.parse_args()
     
-    if labels_path.exists():
-        print("Example 1: Exporting frames at intervals")
-        output_dir = Path("exports/interval_frames")
-        await export_frames_at_intervals(
-            labels_path, 
-            output_dir,
-            interval=100,  # Every 100 frames
-            max_frames=10  # Export 10 frames total
-        )
-        
-        print("\n" + "="*50 + "\n")
-        
-        print("Example 2: Exporting annotated frames only")
-        output_dir = Path("exports/annotated_frames")
-        await export_key_frames(labels_path, output_dir)
-    else:
-        print("Please update the labels_path in this script to point to your .slp file")
+    # Example 1: Export frames at regular intervals
+    labels_path = Path(args.labels_path)
+    
+    print("Example 1: Exporting frames at intervals")
+    output_dir = Path("exports/interval_frames")
+    await export_frames_at_intervals(
+        labels_path, 
+        output_dir,
+        interval=100,  # Every 100 frames
+        max_frames=10  # Export 10 frames total
+    )
+    
+    print("\n" + "="*50 + "\n")
+    
+    print("Example 2: Exporting annotated frames only")
+    output_dir = Path("exports/annotated_frames")
+    await export_key_frames(labels_path, output_dir)
 
 
 if __name__ == "__main__":

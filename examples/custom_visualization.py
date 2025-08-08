@@ -6,6 +6,7 @@ This example shows how to:
 - Configure visibility modes for predictions
 """
 
+import argparse
 import asyncio
 from pathlib import Path
 import sleap_io as sio
@@ -18,8 +19,17 @@ from sleap_viz.interactive import InteractiveControls
 
 async def main():
     """Demonstrate visualization customization options."""
+    parser = argparse.ArgumentParser(description="Custom visualization example")
+    parser.add_argument(
+        "labels_path",
+        nargs="?",
+        default="tests/fixtures/centered_pair_predictions.slp",
+        help="Path to SLEAP labels file (.slp)",
+    )
+    args = parser.parse_args()
+    
     # Load SLEAP data
-    labels_path = Path("path/to/your/labels.slp")
+    labels_path = Path(args.labels_path)
     labels = sio.load_slp(str(labels_path), open_videos=True)
     video = labels.videos[0]
     

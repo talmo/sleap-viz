@@ -17,7 +17,7 @@ To run this example in a Jupyter notebook:
    
    # Create viewer
    viewer = NotebookViewer(
-       "path/to/labels.slp",
+       "tests/fixtures/centered_pair_predictions.slp",  # Or your own .slp file
        width=800,
        height=600,
        fps=25.0
@@ -61,20 +61,27 @@ To run this example in a Jupyter notebook:
    ```
 """
 
+import argparse
 import asyncio
 from pathlib import Path
-
-# For testing with the test fixture
-test_file = Path(__file__).parent.parent / "tests/fixtures/centered_pair_predictions.slp"
 
 
 async def main():
     """Demonstrate notebook viewer usage."""
+    parser = argparse.ArgumentParser(description="Notebook viewer example")
+    parser.add_argument(
+        "labels_path",
+        nargs="?",
+        default="tests/fixtures/centered_pair_predictions.slp",
+        help="Path to SLEAP labels file (.slp)",
+    )
+    args = parser.parse_args()
+    
     from sleap_viz.notebook import NotebookViewer
     
     # Create viewer with custom settings
     viewer = NotebookViewer(
-        str(test_file),
+        str(args.labels_path),
         width=800,
         height=600,
         fps=25.0,

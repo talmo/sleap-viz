@@ -176,12 +176,18 @@ class CustomPlaybackController:
 
 async def main():
     """Demonstrate programmatic control of the viewer."""
-    # Load SLEAP data
-    labels_path = Path("path/to/your/labels.slp")
+    import argparse
+    parser = argparse.ArgumentParser(description="Programmatic control example")
+    parser.add_argument(
+        "labels_path",
+        nargs="?",
+        default="tests/fixtures/centered_pair_predictions.slp",
+        help="Path to SLEAP labels file (.slp)",
+    )
+    args = parser.parse_args()
     
-    if not labels_path.exists():
-        # Use test fixture if no path specified
-        labels_path = Path("tests/fixtures/centered_pair_predictions.slp")
+    # Load SLEAP data
+    labels_path = Path(args.labels_path)
     
     print(f"Loading {labels_path}...")
     labels = sio.load_slp(str(labels_path), open_videos=True)
