@@ -447,23 +447,46 @@ class Visualizer:
         Args:
             timeline_view: The timeline view to render.
         """
-        # Clear old timeline meshes
+        # Store reference to timeline view
+        self.timeline_view = timeline_view
+        self.timeline_meshes = []
+        self._timeline_mesh_ids = set()
+        self._sync_timeline_meshes()
+    
+    def _sync_timeline_meshes(self) -> None:
+        """Sync timeline meshes from timeline view to main scene."""
+        if not hasattr(self, 'timeline_view'):
+            return
+            
+        # Check if timeline meshes have changed by comparing object IDs
+        current_mesh_ids = {id(mesh) for mesh in self.timeline_view.all_meshes if mesh is not None}
+        
+        # If mesh IDs are the same, no sync needed
+        if current_mesh_ids == self._timeline_mesh_ids:
+            return
+        
+        # Clear old timeline meshes from main scene
         for mesh in self.timeline_meshes:
-            self.scene.remove(mesh)
+            try:
+                self.scene.remove(mesh)
+            except:
+                pass  # Mesh wasn't in scene
         self.timeline_meshes.clear()
         
-        # Add timeline meshes to main scene
-        # Position them at the bottom of the canvas
-        for mesh in timeline_view.scene.children:
-            # Clone the mesh and adjust position
-            if hasattr(mesh, "local"):
-                # Timeline meshes are already positioned correctly in their own coord system
-                # We just need to ensure they're at the bottom of our canvas
+        # Add current timeline meshes to main scene
+        for mesh in self.timeline_view.all_meshes:
+            if mesh is not None and hasattr(mesh, "local"):
                 self.scene.add(mesh)
                 self.timeline_meshes.append(mesh)
+        
+        self._timeline_mesh_ids = current_mesh_ids
 
     def draw(self) -> None:
         """Render one frame to the current canvas or offscreen target."""
+        # Sync timeline meshes if needed
+        if hasattr(self, 'timeline_view'):
+            self._sync_timeline_meshes()
+        
         # Render everything in one pass
         self.renderer.render(self.scene, self.camera)
         

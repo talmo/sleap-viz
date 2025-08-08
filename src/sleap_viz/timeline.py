@@ -216,10 +216,9 @@ class TimelineView:
         self.width = width
         self.height = height
         
-        # Create scene and camera
-        self.scene = gfx.Scene()
-        self.camera = gfx.OrthographicCamera(width, height, maintain_aspect=False)
-        self.camera.show_rect(0, width, 0, height, depth=10)
+        # Don't create a separate scene - meshes will be added directly to main scene
+        # Store all timeline meshes in a list instead
+        self.all_meshes = []
         
         # Timeline background
         self.background_mesh = None
@@ -231,27 +230,42 @@ class TimelineView:
         
         # Playhead line
         self.playhead_mesh = None
+        self.playhead_handle_mesh = None  # Draggable handle
         self.playhead_position = 0.0
         
         # Selection overlay
         self.selection_mesh = None
         
-        # Color palette for timeline states
+        # Color palette for timeline states (brighter for visibility)
         self.palette = np.array([
-            [50, 50, 50, 255],      # 0: empty (dark gray)
-            [0, 200, 0, 255],       # 1: user labels (green)
-            [200, 200, 0, 255],     # 2: predicted (yellow)
-            [0, 200, 200, 255],     # 3: both (cyan)
+            [80, 80, 80, 255],      # 0: empty (medium gray)
+            [0, 255, 0, 255],       # 1: user labels (bright green)
+            [255, 255, 0, 255],     # 2: predicted (bright yellow)
+            [0, 255, 255, 255],     # 3: both (bright cyan)
         ], dtype=np.uint8)
         
     def _create_background(self) -> None:
         """Create the background mesh for the timeline."""
-        # Create a dark background rectangle
+        # Create a lighter background rectangle for better contrast
         plane_geo = gfx.plane_geometry(self.width, self.height)
-        material = gfx.MeshBasicMaterial(color=(0.15, 0.15, 0.15, 1))
+        material = gfx.MeshBasicMaterial(color=(0.25, 0.25, 0.25, 1))  # Lighter background
         self.background_mesh = gfx.Mesh(plane_geo, material)
         self.background_mesh.local.position = (self.width / 2, self.height / 2, -2)
-        self.scene.add(self.background_mesh)
+        self.all_meshes.append(self.background_mesh)
+        
+        # Add a progress track line in the middle (more visible)
+        track_positions = np.array([
+            [0, self.height / 2, -0.5],  # Higher Z to be more visible
+            [self.width, self.height / 2, -0.5]
+        ], dtype=np.float32)
+        
+        track_geometry = gfx.Geometry(positions=track_positions)
+        track_material = gfx.LineMaterial(thickness=8.0, color=(0.5, 0.5, 0.5, 1))  # Lighter, thicker track
+        track_mesh = gfx.Line(track_geometry, track_material)
+        self.all_meshes.append(track_mesh)
+        
+        # Progress bar mesh (will be updated with playhead)
+        self.progress_mesh = None
         
     def update_data(self, bins: np.ndarray, frame_min: int, frame_max: int, total_frames: int) -> None:
         """Update the timeline data visualization.
@@ -266,47 +280,13 @@ class TimelineView:
         self.current_frame_max = frame_max
         self.total_frames = total_frames
         if self.data_mesh is not None:
-            self.scene.remove(self.data_mesh)
+            if self.data_mesh in self.all_meshes:
+                self.all_meshes.remove(self.data_mesh)
             self.data_mesh = None
             
-        if bins.size == 0:
-            return
-            
-        # Create texture from bins with color mapping
-        # Expand bins to match timeline width if needed
-        if len(bins) < self.width:
-            # Repeat bins to fill width
-            expanded_bins = np.zeros(self.width, dtype=np.uint8)
-            bin_width = self.width / len(bins)
-            for i, bin_val in enumerate(bins):
-                start_px = int(i * bin_width)
-                end_px = int((i + 1) * bin_width)
-                expanded_bins[start_px:end_px] = bin_val
-            bins = expanded_bins
-        elif len(bins) > self.width:
-            # Downsample bins
-            indices = np.linspace(0, len(bins) - 1, self.width, dtype=int)
-            bins = bins[indices]
-            
-        # Map bins to colors
-        colors = self.palette[bins]
-        
-        # Create a 1D texture that we'll stretch across the timeline
-        # Make it 2D (height x width x 4) for pygfx texture
-        texture_data = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-        for y in range(self.height):
-            texture_data[y, :] = colors
-            
-        # Convert to float32 normalized
-        texture_data = texture_data.astype(np.float32) / 255.0
-        
-        # Create texture and mesh
-        self.data_texture = gfx.Texture(texture_data, dim=2)
-        plane_geo = gfx.plane_geometry(self.width, self.height)
-        material = gfx.MeshBasicMaterial(map=self.data_texture)
-        self.data_mesh = gfx.Mesh(plane_geo, material)
-        self.data_mesh.local.position = (self.width / 2, self.height / 2, -1)
-        self.scene.add(self.data_mesh)
+        # Skip creating the annotation data visualization mesh
+        # We'll just keep the background, track, playhead, and progress bar
+        return
         
     def update_playhead(self, frame: int, total_frames: int, frame_min: int = 0, frame_max: Optional[int] = None) -> None:
         """Update the playhead position.
@@ -317,9 +297,19 @@ class TimelineView:
             frame_min: First visible frame (for zoomed view).
             frame_max: Last visible frame (for zoomed view).
         """
+        # Remove old playhead meshes from list
         if self.playhead_mesh is not None:
-            self.scene.remove(self.playhead_mesh)
+            if self.playhead_mesh in self.all_meshes:
+                self.all_meshes.remove(self.playhead_mesh)
             self.playhead_mesh = None
+        if self.playhead_handle_mesh is not None:
+            if self.playhead_handle_mesh in self.all_meshes:
+                self.all_meshes.remove(self.playhead_handle_mesh)
+            self.playhead_handle_mesh = None
+        if hasattr(self, 'progress_mesh') and self.progress_mesh is not None:
+            if self.progress_mesh in self.all_meshes:
+                self.all_meshes.remove(self.progress_mesh)
+            self.progress_mesh = None
             
         if total_frames == 0:
             return
@@ -339,16 +329,43 @@ class TimelineView:
             
         x_pos = ((frame - frame_min) / visible_frames) * self.width
         
-        # Create a vertical line for the playhead
+        # Create filled progress bar up to current position
+        if x_pos > 0:
+            progress_height = 12  # Height of progress bar
+            progress_y = self.height / 2
+            progress_geo = gfx.plane_geometry(x_pos, progress_height)
+            progress_material = gfx.MeshBasicMaterial(color=(1.0, 0.3, 0.3, 0.9))  # Bright red progress
+            self.progress_mesh = gfx.Mesh(progress_geo, progress_material)
+            self.progress_mesh.local.position = (x_pos / 2, progress_y, 3)  # Position at center of progress
+            self.all_meshes.append(self.progress_mesh)
+        
+        # Create a vertical line for the playhead with higher Z value to be on top
         positions = np.array([
-            [x_pos, 0, 1],
-            [x_pos, self.height, 1]
+            [x_pos, 0, 5],  # Higher Z value to render on top
+            [x_pos, self.height, 5]
         ], dtype=np.float32)
         
         geometry = gfx.Geometry(positions=positions)
-        material = gfx.LineMaterial(thickness=2.0, color=(1, 0, 0, 1))  # Red playhead
+        material = gfx.LineMaterial(thickness=5.0, color=(1, 1, 1, 1))  # White playhead for contrast
         self.playhead_mesh = gfx.Line(geometry, material)
-        self.scene.add(self.playhead_mesh)
+        self.all_meshes.append(self.playhead_mesh)
+        
+        # Create a handle at the top of the playhead (triangle or circle)
+        # Using a triangle pointing down
+        handle_size = 12  # Larger handle
+        handle_positions = np.array([
+            [x_pos - handle_size, 0, 6],  # Top left (higher Z)
+            [x_pos + handle_size, 0, 6],  # Top right
+            [x_pos, handle_size * 1.5, 6]  # Bottom point
+        ], dtype=np.float32)
+        
+        handle_geometry = gfx.Geometry(
+            positions=handle_positions,
+            indices=np.array([[0, 1, 2]], dtype=np.uint32)
+        )
+        handle_material = gfx.MeshBasicMaterial(color=(1, 0.8, 0, 1))  # Bright yellow for visibility
+        self.playhead_handle_mesh = gfx.Mesh(handle_geometry, handle_material)
+        self.all_meshes.append(self.playhead_handle_mesh)
         
         self.playhead_position = x_pos
         
@@ -363,7 +380,8 @@ class TimelineView:
             frame_max: Last visible frame (for zoomed view, None = total_frames).
         """
         if self.selection_mesh is not None:
-            self.scene.remove(self.selection_mesh)
+            if self.selection_mesh in self.all_meshes:
+                self.all_meshes.remove(self.selection_mesh)
             self.selection_mesh = None
             
         if start_frame is None or end_frame is None:
@@ -398,7 +416,7 @@ class TimelineView:
         material = gfx.MeshBasicMaterial(color=(0.5, 0.5, 1.0, 0.3))  # Semi-transparent blue
         self.selection_mesh = gfx.Mesh(plane_geo, material)
         self.selection_mesh.local.position = (x_start + width / 2, self.height / 2, 0)
-        self.scene.add(self.selection_mesh)
+        self.all_meshes.append(self.selection_mesh)
         
     def frame_from_x(self, x: float, total_frames: int, frame_min: int = 0, frame_max: Optional[int] = None) -> int:
         """Convert x coordinate to frame number.

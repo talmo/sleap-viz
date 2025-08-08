@@ -68,6 +68,7 @@ class InteractiveControls:
         self.picker = picker
         self._handlers_attached = False
         self._is_dragging = False
+        self._is_dragging_playhead = False  # Track if we're dragging the playhead
         self._is_panning = False
         self._is_selecting = False
         self._selection_start_x = None
@@ -495,6 +496,17 @@ class InteractiveControls:
             # Timeline is in bottom 50 pixels (timeline height)
             # Note: pygfx Y coordinates are from top, so timeline is at height - 50
             if y > height - 50:
+                # Check if we're clicking near the playhead handle
+                if hasattr(self.controller, 'timeline_controller'):
+                    timeline_view = self.controller.timeline_controller.view
+                    if hasattr(timeline_view, 'playhead_position'):
+                        # Check if click is near playhead (within 10 pixels)
+                        if abs(x - timeline_view.playhead_position) < 10:
+                            # Start dragging the playhead
+                            self._is_dragging_playhead = True
+                            self._is_dragging = True
+                            return
+                
                 if "Control" in modifiers and hasattr(self.controller, 'timeline_controller'):
                     # Start range selection
                     self._is_selecting = True
@@ -597,6 +609,7 @@ class InteractiveControls:
         elif self._is_panning and hasattr(self.controller, 'timeline_controller'):
             self.controller.timeline_controller.end_pan()
         self._is_dragging = False
+        self._is_dragging_playhead = False  # Reset playhead dragging flag
         self._is_panning = False
         
     def _handle_timeline_interaction(self, x: float, width: float) -> None:
