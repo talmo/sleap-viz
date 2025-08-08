@@ -649,10 +649,6 @@ class InteractiveControls:
         # The event.ctrlKey might be set even when user isn't pressing Ctrl
         is_pinch = "Control" in modifiers or event.get("ctrlKey", False)
         
-        # Debug output to understand the events
-        if is_pinch and dy != 0:
-            print(f"Pinch detected: dy={dy:.2f}, dx={dx:.2f}, modifiers={modifiers}")
-        
         if hasattr(self.canvas, "get_logical_size"):
             width, height = self.canvas.get_logical_size()
             
@@ -672,8 +668,6 @@ class InteractiveControls:
                         current_zoom = self.controller.vis.zoom_level
                         self.controller.vis.set_zoom(current_zoom * scale, x, y)
                         self.controller.vis.draw()
-                        # Remove debug print after testing
-                        # print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
                 elif not is_pinch:
                     # Regular mouse wheel zoom (without Ctrl)
                     if dy > 0:
@@ -729,21 +723,18 @@ class InteractiveControls:
         if hasattr(self.controller, 'vis'):
             self.controller.vis.zoom_in(center_x=center_x, center_y=center_y)
             self.controller.vis.draw()
-            print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
     
     def _zoom_video_out(self, center_x: float = None, center_y: float = None) -> None:
         """Zoom out the video view."""
         if hasattr(self.controller, 'vis'):
             self.controller.vis.zoom_out(center_x=center_x, center_y=center_y)
             self.controller.vis.draw()
-            print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
     
     def _reset_video_zoom(self) -> None:
         """Reset video zoom to fit window."""
         if hasattr(self.controller, 'vis'):
             self.controller.vis.reset_zoom()
             self.controller.vis.draw()
-            print("Video zoom reset")
     
     def _on_pinch(self, event) -> None:
         """Handle pinch gestures for zooming.
