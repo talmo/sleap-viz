@@ -534,10 +534,11 @@ class InteractiveControls:
             if self._pan_start_x is not None and hasattr(self.controller, 'vis'):
                 dx = x - self._pan_start_x
                 dy = y - self._pan_start_y
-                # Natural panning - drag moves the image with the cursor
+                # X: natural panning (drag right moves image right)
+                # Y: inverted panning (drag down moves image up)
                 self.controller.vis.set_pan(
                     self._pan_start_vis_x + dx,
-                    self._pan_start_vis_y + dy
+                    self._pan_start_vis_y - dy  # Inverted Y
                 )
                 self.controller.vis.draw()
         # Check for hover over points (if not dragging)
