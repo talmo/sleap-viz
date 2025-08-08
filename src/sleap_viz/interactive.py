@@ -30,6 +30,8 @@ class InteractiveControls:
     - Shift+H: Toggle histogram equalization
     - E: Toggle CLAHE (enhanced contrast)
     - M: Cycle through LUT modes
+    - Ctrl/Cmd + +/-: Zoom in/out video
+    - Ctrl/Cmd + 0: Reset video zoom
     - Z/Shift+Z: Zoom in/out timeline
     - X: Reset timeline zoom
     - A/D: Pan timeline left/right
@@ -38,13 +40,19 @@ class InteractiveControls:
     - Q/Escape: Quit
     
     Mouse controls:
+    - Mouse wheel: Zoom in/out video (at cursor position)
+    - Click and drag: Pan video
     - Click on timeline: Jump to frame
     - Drag on timeline: Scrub through frames
     - Ctrl+Drag on timeline: Select range
     - Shift+Drag on timeline: Pan timeline
-    - Mouse wheel on timeline: Zoom in/out
+    - Mouse wheel on timeline: Zoom in/out timeline
     - Hover over points: Show tooltip with node name
     - Click on points: Select point
+    
+    Trackpad gestures:
+    - Pinch: Zoom in/out video
+    - Two-finger drag: Pan video
     """
     
     def __init__(self, controller: Controller, canvas=None, picker: Optional[GPUPicker] = None):
@@ -65,6 +73,13 @@ class InteractiveControls:
         self._selection_start_x = None
         self._quit_callback: Callable[[], None] | None = None
         
+        # Video pan state
+        self._is_video_panning = False
+        self._pan_start_x = None
+        self._pan_start_y = None
+        self._pan_start_vis_x = None
+        self._pan_start_vis_y = None
+        
         # Picking state
         self._hovered_pick: Optional[PickingResult] = None
         self._selected_pick: Optional[PickingResult] = None
@@ -82,6 +97,11 @@ class InteractiveControls:
             self.canvas.add_event_handler(self._on_mouse_move, "pointer_move")
             self.canvas.add_event_handler(self._on_mouse_up, "pointer_up")
             self.canvas.add_event_handler(self._on_wheel, "wheel")
+            # Try to add pinch handler if supported
+            try:
+                self.canvas.add_event_handler(self._on_pinch, "pinch")
+            except:
+                pass  # Pinch not supported
             self._handlers_attached = True
             
     def detach_handlers(self) -> None:
@@ -95,6 +115,10 @@ class InteractiveControls:
             self.canvas.remove_event_handler(self._on_mouse_move, "pointer_move")
             self.canvas.remove_event_handler(self._on_mouse_up, "pointer_up")
             self.canvas.remove_event_handler(self._on_wheel, "wheel")
+            try:
+                self.canvas.remove_event_handler(self._on_pinch, "pinch")
+            except:
+                pass  # Pinch not supported
             self._handlers_attached = False
             
     def set_quit_callback(self, callback: Callable[[], None]) -> None:
@@ -317,16 +341,28 @@ class InteractiveControls:
             self.controller.set_playback_speed(speed)
             print(f"Playback speed: {speed}x")
             
-        # Adjust speed
+        # Adjust speed (when not used for zoom)
         elif key == "-" or key == "_":
-            new_speed = max(0.1, self.controller.playback_speed - 0.5)
-            self.controller.set_playback_speed(new_speed)
-            print(f"Playback speed: {new_speed}x")
+            if "Control" in modifiers or "Meta" in modifiers:
+                # Zoom out video
+                self._zoom_video_out()
+            else:
+                new_speed = max(0.1, self.controller.playback_speed - 0.5)
+                self.controller.set_playback_speed(new_speed)
+                print(f"Playback speed: {new_speed}x")
             
         elif key == "=" or key == "+":
-            new_speed = min(10.0, self.controller.playback_speed + 0.5)
-            self.controller.set_playback_speed(new_speed)
-            print(f"Playback speed: {new_speed}x")
+            if "Control" in modifiers or "Meta" in modifiers:
+                # Zoom in video
+                self._zoom_video_in()
+            else:
+                new_speed = min(10.0, self.controller.playback_speed + 0.5)
+                self.controller.set_playback_speed(new_speed)
+                print(f"Playback speed: {new_speed}x")
+        
+        elif key == "0" and ("Control" in modifiers or "Meta" in modifiers):
+            # Reset video zoom
+            self._reset_video_zoom()
             
         # Image adjustments
         elif key == "b":
@@ -466,15 +502,14 @@ class InteractiveControls:
                     # Adjust x coordinate for timeline (timeline uses full width)
                     self._handle_timeline_interaction(x, width)
             else:
-                # Check for point picking in main view
-                if self.picker:
-                    pick_result = self.picker.pick(x, y)
-                    if pick_result.is_valid:
-                        self._selected_pick = pick_result
-                        print(f"Selected: Instance {pick_result.instance_id}, "
-                              f"Node {pick_result.node_id} ({pick_result.node_name})")
-                        # Update visualization to highlight selected point
-                        self._update_selection_highlight()
+                # In main video area
+                # Start video panning
+                self._is_video_panning = True
+                self._pan_start_x = x
+                self._pan_start_y = y
+                if hasattr(self.controller, 'vis'):
+                    self._pan_start_vis_x = self.controller.vis.pan_x
+                    self._pan_start_vis_y = self.controller.vis.pan_y
                 
     def _on_mouse_move(self, event) -> None:
         """Handle mouse move events.
@@ -485,8 +520,19 @@ class InteractiveControls:
         x = event.get("x", 0)
         y = event.get("y", 0)
         
+        # Handle video panning
+        if self._is_video_panning:
+            if self._pan_start_x is not None and hasattr(self.controller, 'vis'):
+                dx = x - self._pan_start_x
+                dy = y - self._pan_start_y
+                # Pan is inverted (drag right to move view left)
+                self.controller.vis.set_pan(
+                    self._pan_start_vis_x - dx,
+                    self._pan_start_vis_y - dy
+                )
+                self.controller.vis.draw()
         # Check for hover over points (if not dragging)
-        if not self._is_dragging and not self._is_selecting and not self._is_panning:
+        elif not self._is_dragging and not self._is_selecting and not self._is_panning:
             if self.picker and hasattr(self.canvas, "get_logical_size"):
                 width, height = self.canvas.get_logical_size()
                 # Only check for hover if not over timeline
@@ -524,7 +570,13 @@ class InteractiveControls:
         Args:
             event: The mouse event.
         """
-        if self._is_selecting:
+        if self._is_video_panning:
+            self._is_video_panning = False
+            self._pan_start_x = None
+            self._pan_start_y = None
+            self._pan_start_vis_x = None
+            self._pan_start_vis_y = None
+        elif self._is_selecting:
             self._is_selecting = False
             self._selection_start_x = None
             # Selection is already set in _on_mouse_move
@@ -563,10 +615,7 @@ class InteractiveControls:
         Args:
             event: The wheel event.
         """
-        if not hasattr(self.controller, 'timeline_controller'):
-            return
-            
-        # Check if wheel is on timeline
+        # Get wheel position and delta
         x = event.get("x", 0)
         y = event.get("y", 0)
         dy = event.get("dy", 0)  # Wheel delta
@@ -577,7 +626,14 @@ class InteractiveControls:
             # Timeline is in bottom 50 pixels
             if y > height - 50:
                 # Handle zoom on timeline
-                self.controller.timeline_controller.handle_wheel(-dy, x)
+                if hasattr(self.controller, 'timeline_controller'):
+                    self.controller.timeline_controller.handle_wheel(-dy, x)
+            else:
+                # Handle zoom on video
+                if dy > 0:
+                    self._zoom_video_out(center_x=x, center_y=y)
+                elif dy < 0:
+                    self._zoom_video_in(center_x=x, center_y=y)
     
     def _show_tooltip(self, pick_result: PickingResult) -> None:
         """Show tooltip for hovered point.
@@ -621,3 +677,40 @@ class InteractiveControls:
             
             # Trigger redraw
             asyncio.create_task(self.controller.goto(self.controller.current_frame))
+    
+    def _zoom_video_in(self, center_x: float = None, center_y: float = None) -> None:
+        """Zoom in the video view."""
+        if hasattr(self.controller, 'vis'):
+            self.controller.vis.zoom_in(center_x=center_x, center_y=center_y)
+            self.controller.vis.draw()
+            print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
+    
+    def _zoom_video_out(self, center_x: float = None, center_y: float = None) -> None:
+        """Zoom out the video view."""
+        if hasattr(self.controller, 'vis'):
+            self.controller.vis.zoom_out(center_x=center_x, center_y=center_y)
+            self.controller.vis.draw()
+            print(f"Video zoom: {self.controller.vis.zoom_level:.1f}x")
+    
+    def _reset_video_zoom(self) -> None:
+        """Reset video zoom to fit window."""
+        if hasattr(self.controller, 'vis'):
+            self.controller.vis.reset_zoom()
+            self.controller.vis.draw()
+            print("Video zoom reset")
+    
+    def _on_pinch(self, event) -> None:
+        """Handle pinch gestures for zooming.
+        
+        Args:
+            event: The pinch event.
+        """
+        scale = event.get("scale", 1.0)
+        x = event.get("x", self.canvas.get_logical_size()[0] / 2 if hasattr(self.canvas, "get_logical_size") else 0)
+        y = event.get("y", self.canvas.get_logical_size()[1] / 2 if hasattr(self.canvas, "get_logical_size") else 0)
+        
+        if hasattr(self.controller, 'vis'):
+            # Apply scale directly
+            current_zoom = self.controller.vis.zoom_level
+            self.controller.vis.set_zoom(current_zoom * scale, x, y)
+            self.controller.vis.draw()

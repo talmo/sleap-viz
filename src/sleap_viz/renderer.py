@@ -102,6 +102,13 @@ class Visualizer:
         self.selected_node = -1
         self.hovered_instance = -1
         self.hovered_node = -1
+        
+        # Zoom and pan state
+        self.zoom_level = 1.0  # 1.0 = fit to window, >1.0 = zoomed in
+        self.pan_x = 0.0  # Pan offset in pixels
+        self.pan_y = 0.0
+        self._base_width = width
+        self._base_height = height
 
     def set_frame_image(self, frame: Frame) -> None:
         """Upload/replace the background texture with the given frame."""
@@ -478,3 +485,86 @@ class Visualizer:
             image = image.astype(np.uint8)
         
         return image
+    
+    def set_zoom(self, zoom_level: float, center_x: float = None, center_y: float = None) -> None:
+        """Set the zoom level and optionally zoom around a specific point.
+        
+        Args:
+            zoom_level: Zoom factor (1.0 = fit to window, >1.0 = zoomed in)
+            center_x: X coordinate to zoom around (in canvas pixels)
+            center_y: Y coordinate to zoom around (in canvas pixels)
+        """
+        # Clamp zoom level to reasonable bounds
+        zoom_level = max(0.5, min(10.0, zoom_level))
+        
+        if center_x is not None and center_y is not None:
+            # Calculate the point in world space before zoom
+            old_world_x = (center_x - self._base_width / 2) / self.zoom_level + self.pan_x
+            old_world_y = (center_y - self._base_height / 2) / self.zoom_level + self.pan_y
+            
+            # Update zoom
+            self.zoom_level = zoom_level
+            
+            # Calculate new pan to keep the same point under cursor
+            new_world_x = (center_x - self._base_width / 2) / self.zoom_level + self.pan_x
+            new_world_y = (center_y - self._base_height / 2) / self.zoom_level + self.pan_y
+            
+            # Adjust pan to compensate
+            self.pan_x += old_world_x - new_world_x
+            self.pan_y += old_world_y - new_world_y
+        else:
+            # Zoom around center
+            self.zoom_level = zoom_level
+        
+        self._update_camera()
+    
+    def zoom_in(self, factor: float = 1.2, center_x: float = None, center_y: float = None) -> None:
+        """Zoom in by a factor."""
+        self.set_zoom(self.zoom_level * factor, center_x, center_y)
+    
+    def zoom_out(self, factor: float = 1.2, center_x: float = None, center_y: float = None) -> None:
+        """Zoom out by a factor."""
+        self.set_zoom(self.zoom_level / factor, center_x, center_y)
+    
+    def reset_zoom(self) -> None:
+        """Reset zoom to fit the window."""
+        self.zoom_level = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self._update_camera()
+    
+    def pan(self, dx: float, dy: float) -> None:
+        """Pan the view by the given offset in screen pixels.
+        
+        Args:
+            dx: Horizontal pan in pixels (positive = right)
+            dy: Vertical pan in pixels (positive = down)
+        """
+        # Convert screen pixels to world units based on zoom
+        self.pan_x += dx / self.zoom_level
+        self.pan_y += dy / self.zoom_level
+        self._update_camera()
+    
+    def set_pan(self, x: float, y: float) -> None:
+        """Set absolute pan position."""
+        self.pan_x = x
+        self.pan_y = y
+        self._update_camera()
+    
+    def _update_camera(self) -> None:
+        """Update camera based on current zoom and pan."""
+        # Calculate visible rectangle based on zoom and pan
+        half_width = self._base_width / (2 * self.zoom_level)
+        half_height = self.total_height / (2 * self.zoom_level)
+        
+        center_x = self._base_width / 2 + self.pan_x
+        center_y = self.total_height / 2 + self.pan_y
+        
+        # Update camera to show the zoomed/panned rectangle
+        self.camera.show_rect(
+            center_x - half_width,
+            center_x + half_width,
+            center_y - half_height,
+            center_y + half_height,
+            depth=10
+        )
