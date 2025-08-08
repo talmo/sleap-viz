@@ -36,6 +36,7 @@ output/
 exports/
 temp/
 tmp/
+scratch/
 
 # Large media files (but keep test fixtures)
 /*.slp

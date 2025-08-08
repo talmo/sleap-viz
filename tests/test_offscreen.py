@@ -5,18 +5,18 @@ import numpy as np
 import sleap_io as sio
 from PIL import Image
 
-from src.sleap_viz.video_source import VideoSource
-from src.sleap_viz.annotation_source import AnnotationSource
-from src.sleap_viz.renderer import Visualizer
-from src.sleap_viz.controller import Controller
+from sleap_viz.video_source import VideoSource
+from sleap_viz.annotation_source import AnnotationSource
+from sleap_viz.renderer import Visualizer
+from sleap_viz.controller import Controller
 
 
 async def test_offscreen_rendering():
     """Test the visualization pipeline with offscreen rendering."""
     print("Loading SLEAP data...")
     
-    # Load the SLEAP labels
-    labels = sio.load_slp("predictions.v012.proofread.slp")
+    # Load the SLEAP labels from fixtures
+    labels = sio.load_slp("tests/fixtures/centered_pair_predictions.slp")
     print(f"Loaded {len(labels)} labeled frames")
     
     # Get the first video
@@ -70,8 +70,8 @@ async def test_offscreen_rendering():
         # Read back the rendered image
         image = visualizer.read_pixels()
         
-        # Save the image
-        output_path = f"test_frame_{frame_idx:04d}.png"
+        # Save the image to scratch directory
+        output_path = f"scratch/test_frame_{frame_idx:04d}.png"
         Image.fromarray(image).save(output_path)
         print(f"Saved rendered frame to {output_path}")
         

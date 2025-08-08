@@ -41,8 +41,8 @@ class Visualizer:
         # Use OrthographicCamera for better control
         self.camera = gfx.OrthographicCamera(width, height, maintain_aspect=False)
         # Set view rectangle: left, right, top, bottom
-        # Flip Y-axis to match image coordinates (Y increases downward)
-        self.camera.show_rect(0, width, height, 0)  # bottom=height, top=0 flips Y
+        # Use standard coordinate system (Y increases upward)
+        self.camera.show_rect(0, width, 0, height, depth=10)  # depth for z-range
         
         # Video background mesh
         self.video_texture = None
@@ -60,7 +60,7 @@ class Visualizer:
         
         # Lines overlay
         self.lines_geometry = None
-        self.lines_material = gfx.LineMaterial(
+        self.lines_material = gfx.LineSegmentMaterial(
             thickness=4.0,  # Increased thickness for visibility
             color=(0, 1, 0, 1)  # Green
         )
@@ -159,9 +159,10 @@ class Visualizer:
         if len(visible_indices) == 0:
             return
         
-        # Use pixel coordinates directly
+        # Convert pixel coordinates to OpenGL coordinates (flip Y)
         positions_3d = np.zeros((len(visible_indices), 3), dtype=np.float32)
-        positions_3d[:, :2] = points_flat[visible_indices]
+        positions_3d[:, 0] = points_flat[visible_indices, 0]  # X stays the same
+        positions_3d[:, 1] = self.height - points_flat[visible_indices, 1]  # Flip Y
         positions_3d[:, 2] = 0  # Z = 0 for overlay (in front of background at z=-1)
         
         # Create points geometry and mesh
@@ -182,7 +183,6 @@ class Visualizer:
         
         # Create lines for edges
         if edges is not None and edges.size > 0:
-            print(f"Processing {edges.shape[0]} edges for {n_inst} instances")
             line_positions = []
             line_count = 0
             
@@ -198,29 +198,21 @@ class Visualizer:
                             p1 = inst_points[node1]
                             p2 = inst_points[node2]
                             
-                            # Add line segment
+                            # Add line segment (flip Y coordinate)
                             line_positions.extend([
-                                [float(p1[0]), float(p1[1]), 0],
-                                [float(p2[0]), float(p2[1]), 0]
+                                [float(p1[0]), float(self.height - p1[1]), 0],
+                                [float(p2[0]), float(self.height - p2[1]), 0]
                             ])
                             line_count += 1
             
-            print(f"Created {line_count} line segments")
-            
-            if line_count > 0:  # Check line_count instead of line_positions
-                try:
-                    line_positions = np.array(line_positions, dtype=np.float32)
-                    print(f"Line positions shape: {line_positions.shape}")
-                    self.lines_geometry = gfx.Geometry(positions=line_positions)
-                    self.lines_mesh = gfx.Line(
-                        self.lines_geometry,
-                        self.lines_material,
-                        mode="segments"
-                    )
-                    self.scene.add(self.lines_mesh)
-                    print(f"Added lines mesh to scene")
-                except Exception as e:
-                    print(f"Error adding lines: {e}")
+            if line_count > 0:
+                line_positions = np.array(line_positions, dtype=np.float32)
+                self.lines_geometry = gfx.Geometry(positions=line_positions)
+                self.lines_mesh = gfx.Line(
+                    self.lines_geometry,
+                    self.lines_material
+                )
+                self.scene.add(self.lines_mesh)
 
     def set_color_policy(
         self,
