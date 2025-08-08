@@ -361,22 +361,19 @@ All MVP features have been implemented:
   - Implemented video mesh reuse (10% improvement)
   - Implemented overlay mesh/buffer reuse (44% improvement)
   - Final result: **15.5 FPS (65ms per frame) - 2.5x speedup!**
-- ✅ New bottleneck analysis:
-  - Video I/O now dominant at 82% of frame time
-  - GPU rendering reduced to 14% (from 69%)
-- ✅ Performance analysis findings:
-  - **Main bottlenecks identified**:
-    - GPU rendering: 92.7ms (56% of frame time)
-    - Video I/O: 68.4ms (41% of frame time)
-  - Average performance: ~6 FPS in offscreen mode
-  - Annotation processing very efficient (<1ms)
-- ✅ Created documentation and test suite:
-  - Comprehensive README with findings and optimization recommendations
-  - Test script validates all performance monitoring features
-- **Key optimization opportunities**:
-  - Profile pygfx/wgpu render pipeline to optimize 92ms draw time
-  - Improve video I/O with better prefetching or parallel decoding
-  - Consider frame skipping for smoother perceived playback
+- ✅ Deep profiling of render pipeline:
+  - Timeline rendering: <1ms overhead (negligible)
+  - GPU rendering: Reduced from 110ms to 3.5ms (96% reduction!)
+  - Video I/O: Now 88% of frame time (45ms)
+  - Overall: **19.6 FPS after all optimizations (3.2x improvement)**
+- ✅ Component-level profiling:
+  - Isolated video, overlay, and timeline rendering
+  - Profiled wgpu/pygfx operations (texture, buffer, mesh)
+  - Confirmed excellent hardware bandwidth (33-48 GB/s)
+- **Next optimization target**:
+  - Video I/O is the only remaining bottleneck (88% of frame time)
+  - Need parallel prefetching and better caching strategies
+  - Consider hardware video decoding
 
 ---
 
