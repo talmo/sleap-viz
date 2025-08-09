@@ -206,7 +206,7 @@ class TimelineModel:
 class TimelineView:
     """Render the timeline using pygfx."""
 
-    def __init__(self, width: int = 800, height: int = 50) -> None:
+    def __init__(self, width: int = 800, height: int = 20) -> None:
         """Create canvas and materials for the timeline.
         
         Args:

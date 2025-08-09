@@ -24,7 +24,7 @@ class Visualizer:
     Modes: desktop (window), notebook (rfb), offscreen.
     """
 
-    def __init__(self, width: int, height: int, mode: str = "auto", timeline_height: int = 50) -> None:
+    def __init__(self, width: int, height: int, mode: str = "auto", timeline_height: int = 20) -> None:
         """Create canvas, device, and persistent GPU resources.
         
         Args:
@@ -66,7 +66,7 @@ class Visualizer:
         # Points overlay
         self.points_geometry = None
         self.points_material = gfx.PointsMaterial(
-            size=10.0,  # Increased size for visibility
+            size=5.0,  # Node size (half of original)
             color=(1, 0, 0, 1),  # Red
             size_space="screen",
             aa=True,
@@ -79,7 +79,7 @@ class Visualizer:
         # Lines overlay
         self.lines_geometry = None
         self.lines_material = gfx.LineSegmentMaterial(
-            thickness=4.0,  # Increased thickness for visibility
+            thickness=1.5,  # Edge line width
             color=(0, 1, 0, 1),  # Green
             color_mode="vertex"  # Always use vertex colors
         )

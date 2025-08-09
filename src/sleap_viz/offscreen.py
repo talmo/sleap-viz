@@ -67,7 +67,7 @@ class OffscreenRenderer:
         tone_map: str = "linear",
         lut_mode: str = "none",
         include_timeline: bool = False,
-        timeline_height: int = 50,
+        timeline_height: int = 20,
     ):
         """Initialize the offscreen renderer.
         

@@ -75,6 +75,12 @@ class InteractiveControls:
         self._selection_start_x = None
         self._quit_callback: Callable[[], None] | None = None
         
+        # Key repeat state
+        self._keys_held = set()  # Track which keys are currently held
+        self._key_repeat_task = None  # Task for repeating key actions
+        self._key_repeat_delay = 0.5  # Initial delay before repeat starts (seconds)
+        self._key_repeat_interval = 0.03  # Interval between repeats (seconds)
+        
         # Video pan state
         self._is_video_panning = False
         self._pan_start_x = None
@@ -94,7 +100,8 @@ class InteractiveControls:
             
         # Attach keyboard and mouse handlers
         if hasattr(self.canvas, "add_event_handler"):
-            self.canvas.add_event_handler(self._on_key, "key_down")
+            self.canvas.add_event_handler(self._on_key_down, "key_down")
+            self.canvas.add_event_handler(self._on_key_up, "key_up")
             self.canvas.add_event_handler(self._on_mouse_down, "pointer_down")
             self.canvas.add_event_handler(self._on_mouse_move, "pointer_move")
             self.canvas.add_event_handler(self._on_mouse_up, "pointer_up")
@@ -117,7 +124,8 @@ class InteractiveControls:
             return
             
         if hasattr(self.canvas, "remove_event_handler"):
-            self.canvas.remove_event_handler(self._on_key, "key_down")
+            self.canvas.remove_event_handler(self._on_key_down, "key_down")
+            self.canvas.remove_event_handler(self._on_key_up, "key_up")
             self.canvas.remove_event_handler(self._on_mouse_down, "pointer_down")
             self.canvas.remove_event_handler(self._on_mouse_move, "pointer_move")
             self.canvas.remove_event_handler(self._on_mouse_up, "pointer_up")
@@ -300,14 +308,47 @@ class InteractiveControls:
         except Exception as e:
             print(f"Failed to load config: {e}")
             
-    def _on_key(self, event) -> None:
-        """Handle keyboard events.
+    async def _repeat_key_action(self, key: str, modifiers: list) -> None:
+        """Repeat a key action while the key is held down.
+        
+        Args:
+            key: The key being held.
+            modifiers: The modifiers active when key was pressed.
+        """
+        # Wait for initial delay
+        await asyncio.sleep(self._key_repeat_delay)
+        
+        # Continue repeating while key is held
+        while key in self._keys_held:
+            if key == "ArrowLeft":
+                if "Shift" in modifiers:
+                    await self.controller.skip_frames(-10)
+                else:
+                    await self.controller.prev_frame()
+            elif key == "ArrowRight":
+                if "Shift" in modifiers:
+                    await self.controller.skip_frames(10)
+                else:
+                    await self.controller.next_frame()
+            elif key == "j":
+                await self.controller.prev_frame()
+            elif key == "k":
+                await self.controller.next_frame()
+            
+            # Wait for repeat interval
+            await asyncio.sleep(self._key_repeat_interval)
+    
+    def _on_key_down(self, event) -> None:
+        """Handle keyboard key down events.
         
         Args:
             event: The keyboard event.
         """
         key = event.get("key", "")
         modifiers = event.get("modifiers", [])
+        
+        # Track key as held
+        self._keys_held.add(key)
         
         # Create async task for controller methods
         loop = asyncio.get_event_loop()
@@ -316,24 +357,40 @@ class InteractiveControls:
         if key == " ":
             loop.create_task(self.controller.toggle_play_pause())
             
-        # Frame navigation
+        # Frame navigation - handle first press and start repeat
         elif key == "ArrowLeft":
             if "Shift" in modifiers:
                 loop.create_task(self.controller.skip_frames(-10))
             else:
                 loop.create_task(self.controller.prev_frame())
+            # Start repeat task
+            if self._key_repeat_task:
+                self._key_repeat_task.cancel()
+            self._key_repeat_task = loop.create_task(self._repeat_key_action(key, modifiers))
                 
         elif key == "ArrowRight":
             if "Shift" in modifiers:
                 loop.create_task(self.controller.skip_frames(10))
             else:
                 loop.create_task(self.controller.next_frame())
+            # Start repeat task
+            if self._key_repeat_task:
+                self._key_repeat_task.cancel()
+            self._key_repeat_task = loop.create_task(self._repeat_key_action(key, modifiers))
                 
         # Vim-style navigation
         elif key == "j":
             loop.create_task(self.controller.prev_frame())
+            # Start repeat task
+            if self._key_repeat_task:
+                self._key_repeat_task.cancel()
+            self._key_repeat_task = loop.create_task(self._repeat_key_action(key, modifiers))
         elif key == "k":
             loop.create_task(self.controller.next_frame())
+            # Start repeat task
+            if self._key_repeat_task:
+                self._key_repeat_task.cancel()
+            self._key_repeat_task = loop.create_task(self._repeat_key_action(key, modifiers))
             
         # Jump to start/end
         elif key == "Home":
@@ -510,6 +567,23 @@ class InteractiveControls:
                 self._quit_callback()
             else:
                 print("Quit requested")
+    
+    def _on_key_up(self, event) -> None:
+        """Handle keyboard key up events.
+        
+        Args:
+            event: The keyboard event.
+        """
+        key = event.get("key", "")
+        
+        # Remove key from held set
+        self._keys_held.discard(key)
+        
+        # Cancel repeat task if this was a repeating key
+        if key in ["ArrowLeft", "ArrowRight", "j", "k"]:
+            if self._key_repeat_task:
+                self._key_repeat_task.cancel()
+                self._key_repeat_task = None
                 
     def _on_mouse_down(self, event) -> None:
         """Handle mouse down events.

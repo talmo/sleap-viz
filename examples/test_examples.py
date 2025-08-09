@@ -92,7 +92,7 @@ async def test_customization_example():
         width=width, 
         height=height, 
         mode="offscreen",
-        timeline_height=50
+        timeline_height=20
     )
     
     # Test different color policies

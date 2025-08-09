@@ -44,7 +44,7 @@ async def main():
         width=width, 
         height=height, 
         mode="desktop",
-        timeline_height=50  # Add timeline at bottom
+        timeline_height=20  # Add timeline at bottom
     )
     
     # Customize appearance

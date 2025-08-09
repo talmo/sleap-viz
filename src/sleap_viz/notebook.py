@@ -129,7 +129,7 @@ class NotebookViewer:
             video_width, 
             video_height, 
             mode="notebook",
-            timeline_height=50
+            timeline_height=20
         )
         
         # Override canvas with our Jupyter canvas
@@ -155,7 +155,7 @@ class NotebookViewer:
         # Create timeline components
         total_frames = self.labels.video.shape[0] if self.labels.video else 0
         self.timeline_model = TimelineModel(total_frames)
-        self.timeline_view = TimelineView(self.width, 50)
+        self.timeline_view = TimelineView(self.width, 20)
         self.timeline_controller = TimelineController(
             self.timeline_model,
             self.timeline_view

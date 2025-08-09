@@ -232,12 +232,12 @@ def main(
         
         vis = Visualizer(
             width=width, height=height, mode="offscreen" if offscreen else "desktop",
-            timeline_height=50
+            timeline_height=20
         )
         
         # Create timeline components
         timeline_model = TimelineModel(len(video))
-        timeline_view = TimelineView(width=width, height=50)
+        timeline_view = TimelineView(width=width, height=20)
         timeline_controller = TimelineController(timeline_model, timeline_view)
         
         # Set annotation source for timeline
