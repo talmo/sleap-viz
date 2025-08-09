@@ -10,6 +10,7 @@ from typing import Optional, Callable, TYPE_CHECKING
 from .annotation_source import AnnotationSource
 from .video_source import VideoSource
 from .performance import PerformanceMonitor
+from .frame_skipper import AdaptiveFrameSkipper
 
 if TYPE_CHECKING:
     from .timeline import TimelineController
@@ -59,6 +60,16 @@ class Controller:
         # Share performance monitor with visualizer
         self.perf_monitor = PerformanceMonitor()
         self.vis.perf_monitor = self.perf_monitor
+        
+        # Frame skipping for smooth playback
+        self.frame_skipper = AdaptiveFrameSkipper(
+            target_fps=play_fps,
+            min_quality=0.25,  # Show at least 25% of frames
+            adaptation_rate=0.15
+        )
+        self.enable_frame_skipping = True  # Can be toggled
+        self.force_render_every_n = 5  # Force render at least every N frames during skip
+        self._frames_since_render = 0
         
         # Playback state
         self.state = PlaybackState.STOPPED
@@ -221,6 +232,9 @@ class Controller:
     def set_playback_speed(self, speed: float) -> None:
         """Set playback speed multiplier (1.0 = normal, 2.0 = 2x, etc)."""
         self.playback_speed = max(0.1, min(speed, 10.0))
+        # Update frame skipper target
+        if self.enable_frame_skipping:
+            self.frame_skipper.set_target_fps(self.play_fps * self.playback_speed)
     
     def set_loop(self, loop: bool) -> None:
         """Enable or disable looping at end of video."""
@@ -229,6 +243,11 @@ class Controller:
     async def _playback_loop(self) -> None:
         """Internal playback loop for continuous frame advancement."""
         try:
+            # Reset frame skipper at start of playback
+            if self.enable_frame_skipping:
+                self.frame_skipper.reset()
+                self.frame_skipper.set_target_fps(self.play_fps * self.playback_speed)
+            
             while self.state == PlaybackState.PLAYING:
                 # Calculate target frame time with speed adjustment
                 target_interval = self._frame_interval / self.playback_speed
@@ -236,6 +255,7 @@ class Controller:
                 
                 # Check if it's time for next frame
                 if current_time - self._last_frame_time >= target_interval:
+                    frame_start = current_time
                     self._last_frame_time = current_time
                     
                     # Advance frame
@@ -245,12 +265,46 @@ class Controller:
                     if next_frame >= self.total_frames:
                         if self.loop:
                             next_frame = 0
+                            if self.enable_frame_skipping:
+                                self.frame_skipper.reset()  # Reset skipper on loop
                         else:
                             await self.stop()
                             break
                     
-                    # Navigate to next frame
-                    await self.goto(next_frame)
+                    # Check if we should render this frame
+                    should_render = True
+                    if self.enable_frame_skipping and self.state == PlaybackState.PLAYING:
+                        should_render = self.frame_skipper.should_render_frame(next_frame, current_time)
+                        
+                        # Force render if we've skipped too many frames
+                        if not should_render:
+                            self._frames_since_render += 1
+                            if self._frames_since_render >= self.force_render_every_n:
+                                should_render = True
+                                self._frames_since_render = 0
+                        else:
+                            self._frames_since_render = 0
+                    
+                    if should_render:
+                        # Navigate to and render frame
+                        await self.goto(next_frame)
+                        
+                        # Record frame time for adaptation
+                        if self.enable_frame_skipping:
+                            frame_time = time.monotonic() - frame_start
+                            self.frame_skipper.record_frame_time(frame_time)
+                            
+                            # Update skip indicator
+                            stats = self.frame_skipper.get_stats()
+                            self.vis.update_skip_indicator(
+                                stats.current_quality,
+                                stats.frames_skipped
+                            )
+                    else:
+                        # Just update frame counter without rendering
+                        self.current_frame = next_frame
+                        if self.on_frame_changed:
+                            self.on_frame_changed(self.current_frame)
                 
                 # Small sleep to prevent busy waiting
                 await asyncio.sleep(0.001)
@@ -260,11 +314,49 @@ class Controller:
     
     def get_playback_info(self) -> dict:
         """Get current playback status information."""
-        return {
+        info = {
             "state": self.state.value,
             "current_frame": self.current_frame,
             "total_frames": self.total_frames,
             "fps": self.play_fps,
             "speed": self.playback_speed,
             "loop": self.loop,
+            "frame_skipping": self.enable_frame_skipping,
         }
+        
+        # Add frame skip stats if enabled
+        if self.enable_frame_skipping:
+            stats = self.frame_skipper.get_stats()
+            info["skip_stats"] = {
+                "frames_rendered": stats.frames_rendered,
+                "frames_skipped": stats.frames_skipped,
+                "skip_rate": f"{stats.skip_rate * 100:.1f}%",
+                "quality": f"{stats.current_quality * 100:.0f}%",
+                "target_achieved": stats.target_achieved,
+            }
+        
+        return info
+    
+    def toggle_frame_skipping(self) -> None:
+        """Toggle adaptive frame skipping on/off."""
+        self.enable_frame_skipping = not self.enable_frame_skipping
+        if self.enable_frame_skipping:
+            self.frame_skipper.reset()
+    
+    def set_frame_skip_quality(self, min_quality: float) -> None:
+        """Set minimum quality for frame skipping (0.0-1.0).
+        
+        Args:
+            min_quality: Minimum fraction of frames to show (1.0 = all frames).
+        """
+        self.frame_skipper.min_quality = max(0.1, min(1.0, min_quality))
+    
+    def set_target_fps(self, fps: float) -> None:
+        """Set target FPS for adaptive frame skipping.
+        
+        Args:
+            fps: Target frames per second.
+        """
+        self.play_fps = fps
+        self._frame_interval = 1.0 / fps
+        self.frame_skipper.set_target_fps(fps * self.playback_speed)

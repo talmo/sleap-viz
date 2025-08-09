@@ -123,6 +123,24 @@ def _eprint(msg: str) -> None:
     help="Policy for frames without annotations: error or blank.",
 )
 @click.option(
+    "--enable-frame-skipping/--no-frame-skipping",
+    default=True,
+    show_default=True,
+    help="Enable adaptive frame skipping for smooth playback.",
+)
+@click.option(
+    "--frame-skip-quality",
+    type=float,
+    default=0.25,
+    show_default=True,
+    help="Minimum quality for frame skipping (0.1-1.0, where 1.0 shows all frames).",
+)
+@click.option(
+    "--target-fps",
+    type=float,
+    help="Target FPS for frame skipping (defaults to --fps value).",
+)
+@click.option(
     "--load-config",
     type=str,
     help="Load viewer settings from config (name or path to .json file).",
@@ -152,6 +170,9 @@ def main(
     sigmoid_midpoint: float,
     sigmoid_slope: float,
     missing_frame_policy: str,
+    enable_frame_skipping: bool,
+    frame_skip_quality: float,
+    target_fps: float | None,
     load_config: str | None,
     save_config: str | None,
 ) -> None:
@@ -283,6 +304,12 @@ def main(
 
         controller = Controller(vs, anno, vis, video, play_fps=fps, missing_frame_policy=missing_frame_policy)
         
+        # Configure frame skipping
+        controller.enable_frame_skipping = enable_frame_skipping
+        controller.set_frame_skip_quality(frame_skip_quality)
+        if target_fps is not None:
+            controller.set_target_fps(target_fps)
+        
         # Connect controller to timeline
         controller.timeline_controller = timeline_controller
 
@@ -320,7 +347,7 @@ def main(
             controls.set_quit_callback(lambda: stop_event.set())
             
             _eprint("[sleap-viz] Interactive viewer ready. Press 'h' for help or 'q' to quit.")
-            _eprint("Controls: Space=play/pause, Arrows=navigate, 0-9=speed, L=loop, F=FPS display")
+            _eprint("Controls: Space=play/pause, Arrows=navigate, 0-9=speed, L=loop, F=FPS display, V=frame skip")
             _eprint("Image adjustments: B=brightness, C=contrast, G=gamma, R=reset")
             _eprint("Tone mapping: T=toggle, Shift+H=histogram, E=CLAHE, M=cycle modes")
             _eprint("Config: Ctrl+Shift+F=save, Ctrl+Shift+O=load")

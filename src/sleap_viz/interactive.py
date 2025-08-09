@@ -472,6 +472,30 @@ class InteractiveControls:
             if hasattr(self.controller.vis, 'toggle_perf_display'):
                 self.controller.vis.toggle_perf_display()
         
+        # Frame skipping controls
+        elif key == "v":
+            # V: Toggle frame skipping
+            self.controller.toggle_frame_skipping()
+            state = "enabled" if self.controller.enable_frame_skipping else "disabled"
+            print(f"Adaptive frame skipping: {state}")
+            
+            # Update indicator when disabling
+            if not self.controller.enable_frame_skipping:
+                self.controller.vis.update_skip_indicator(1.0, 0)
+        
+        elif key == "V":
+            # Shift+V: Cycle quality levels
+            current_quality = self.controller.frame_skipper.min_quality
+            if current_quality >= 0.75:
+                new_quality = 0.25  # Low quality (show 25% of frames)
+            elif current_quality >= 0.5:
+                new_quality = 0.75  # High quality (show 75% of frames)
+            else:
+                new_quality = 0.5  # Medium quality (show 50% of frames)
+            
+            self.controller.set_frame_skip_quality(new_quality)
+            print(f"Frame skip quality: {int(new_quality * 100)}%")
+        
         # Config operations
         elif key == "f" and "Control" in modifiers and "Shift" in modifiers:
             # Ctrl+Shift+F: Save config

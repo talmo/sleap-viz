@@ -114,6 +114,11 @@ class Visualizer:
         self.perf_text_mesh = None
         self._init_perf_display()
         
+        # Frame skip indicator
+        self.show_skip_indicator = True
+        self.skip_indicator_mesh = None
+        self._frame_skip_quality = 1.0  # 1.0 = no skipping
+        
         # Zoom and pan state
         self.zoom_level = 1.0  # 1.0 = fit to window, >1.0 = zoomed in
         self.pan_x = 0.0  # Pan offset in pixels
@@ -600,6 +605,59 @@ class Visualizer:
         else:
             print("[Performance stats disabled]")
             print("\033[2J\033[H")  # Clear screen when disabling
+    
+    def update_skip_indicator(self, quality: float, frames_skipped: int = 0) -> None:
+        """Update frame skip quality indicator.
+        
+        Args:
+            quality: Current rendering quality (0.0-1.0).
+            frames_skipped: Number of frames skipped recently.
+        """
+        self._frame_skip_quality = quality
+        
+        # Create visual indicator (small colored box in corner)
+        if self.show_skip_indicator and self.skip_indicator_mesh is None:
+            # Create a small colored rectangle as indicator
+            import pygfx as gfx
+            
+            # Create indicator geometry (small box in top-right corner)
+            indicator_size = 20
+            indicator_geo = gfx.plane_geometry(indicator_size, indicator_size)
+            
+            # Color based on quality (green = good, yellow = medium, red = poor)
+            if quality > 0.8:
+                color = (0, 1, 0, 0.7)  # Green
+            elif quality > 0.5:
+                color = (1, 1, 0, 0.7)  # Yellow
+            else:
+                color = (1, 0, 0, 0.7)  # Red
+            
+            indicator_mat = gfx.MeshBasicMaterial(color=color)
+            self.skip_indicator_mesh = gfx.Mesh(indicator_geo, indicator_mat)
+            
+            # Position in top-right corner
+            self.skip_indicator_mesh.local.position = (
+                self.width - indicator_size / 2 - 10,
+                self.total_height - indicator_size / 2 - 10,
+                1  # In front of everything
+            )
+            
+            self.scene.add(self.skip_indicator_mesh)
+        
+        # Update color based on current quality
+        if self.skip_indicator_mesh and self.show_skip_indicator:
+            if quality > 0.8:
+                color = (0, 1, 0, 0.7)  # Green
+            elif quality > 0.5:
+                color = (1, 1, 0, 0.7)  # Yellow  
+            else:
+                color = (1, 0, 0, 0.7)  # Red
+            
+            self.skip_indicator_mesh.material.color = color
+        
+        # Hide indicator if quality is 100%
+        if self.skip_indicator_mesh:
+            self.skip_indicator_mesh.visible = quality < 0.99 and self.show_skip_indicator
 
     def read_pixels(self) -> np.ndarray:
         """Return the last rendered image as uint8 H x W x 3.
