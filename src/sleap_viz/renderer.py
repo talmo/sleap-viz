@@ -129,16 +129,29 @@ class Visualizer:
         # Performance monitor (optional)
         self.perf_monitor = None
 
-    def set_frame_image(self, frame: Frame) -> None:
-        """Upload/replace the background texture with the given frame."""
-        if frame is None or frame.rgb is None:
+    def set_frame_image(self, frame) -> None:
+        """Upload/replace the background texture with the given frame.
+        
+        Args:
+            frame: Either a Frame object with .rgb attribute or a raw numpy array.
+        """
+        if frame is None:
+            return
+        
+        # Handle both Frame objects and raw arrays
+        if hasattr(frame, 'rgb'):
+            image_data = frame.rgb
+        else:
+            image_data = frame
+        
+        if image_data is None:
             return
         
         perf = self.perf_monitor
         
         # Ensure frame data is float32 and normalized
         if perf: perf.start_timer("prepare_frame_data")
-        frame_data = frame.rgb.astype(np.float32) / 255.0
+        frame_data = image_data.astype(np.float32) / 255.0
         
         # Convert grayscale to RGB if needed
         if frame_data.ndim == 3 and frame_data.shape[2] == 1:

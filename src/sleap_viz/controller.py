@@ -89,6 +89,12 @@ class Controller:
         
         # Timeline controller (set by CLI)
         self.timeline_controller: Optional[TimelineController] = None
+        
+        # Scrubbing optimization
+        self._last_rendered_frame: Optional[np.ndarray] = None
+        self._frame_load_task: Optional[asyncio.Task] = None
+        self._pending_frame_index: Optional[int] = None
+        self._is_scrubbing = False
 
     async def goto(self, index: int) -> None:
         """Seek to a specific frame index and draw once."""
@@ -114,7 +120,13 @@ class Controller:
         
         if frame is not None:
             self.perf_monitor.start_timer("set_frame")
-            self.vis.set_frame_image(frame)
+            # Handle both Frame objects and raw arrays
+            if hasattr(frame, 'rgb'):
+                image_data = frame.rgb
+            else:
+                image_data = frame
+            self.vis.set_frame_image(image_data)
+            self._last_rendered_frame = image_data
             self.perf_monitor.end_timer("set_frame")
         
         # Load and set annotations
@@ -360,3 +372,144 @@ class Controller:
         self.play_fps = fps
         self._frame_interval = 1.0 / fps
         self.frame_skipper.set_target_fps(fps * self.playback_speed)
+    
+    async def scrub_to(self, index: int) -> None:
+        """Optimized seek for scrubbing - renders annotations immediately, loads image async.
+        
+        This method provides responsive scrubbing by:
+        1. Immediately updating annotations and timeline
+        2. Keeping the last frame image if new one isn't ready
+        3. Cancelling pending frame loads if a newer frame is requested
+        4. Loading the image asynchronously without blocking
+        
+        Args:
+            index: Frame index to scrub to.
+        """
+        # Mark that we're scrubbing
+        self._is_scrubbing = True
+        
+        # Start frame timing
+        self.perf_monitor.start_frame(index)
+        
+        # Clamp to valid range
+        index = max(0, min(index, self.total_frames - 1))
+        self.current_frame = index
+        
+        # Cancel any pending frame load if we have a newer request
+        if self._frame_load_task and not self._frame_load_task.done():
+            self._frame_load_task.cancel()
+            self._frame_load_task = None
+        
+        # Update annotations immediately (very fast)
+        try:
+            self.perf_monitor.start_timer("annotation_load")
+            data = self.anno.get_frame_data(self.video, index, missing_policy=self.missing_frame_policy)
+            self.perf_monitor.end_timer("annotation_load")
+            
+            self.perf_monitor.start_timer("set_overlay")
+            self.vis.set_overlay(
+                data["points_xy"],
+                data["visible"],
+                data["edges"],
+                data.get("inst_kind"),
+                data.get("track_id"),
+                data.get("node_ids"),
+                None,
+                data.get("labels"),
+            )
+            self.perf_monitor.end_timer("set_overlay")
+        except Exception:
+            pass
+        
+        # Update timeline immediately
+        if self.timeline_controller:
+            self.perf_monitor.start_timer("timeline_update")
+            self.timeline_controller.set_current_frame(self.current_frame)
+            self.perf_monitor.end_timer("timeline_update")
+        
+        # Draw with current frame image (reuse last if available)
+        if self._last_rendered_frame is not None:
+            # Keep the existing frame image
+            self.perf_monitor.start_timer("draw")
+            self.vis.draw()
+            self.perf_monitor.end_timer("draw")
+        else:
+            # No previous frame, try to get something quickly
+            frame = await self.vs.get(index, timeout=0.001)  # Very short timeout
+            if frame is None:
+                # Try nearest available
+                near = self.vs.nearest_available(index)
+                if near is not None:
+                    frame = await self.vs.get(near, timeout=0.001)
+            
+            if frame is not None:
+                # Handle both Frame objects and raw arrays
+                if hasattr(frame, 'rgb'):
+                    image_data = frame.rgb
+                else:
+                    image_data = frame
+                self.vis.set_frame_image(image_data)
+                self._last_rendered_frame = image_data
+                
+            self.perf_monitor.start_timer("draw")
+            self.vis.draw()
+            self.perf_monitor.end_timer("draw")
+        
+        # End frame timing for immediate render
+        self.perf_monitor.end_frame()
+        
+        # Update performance display if enabled
+        if self.vis.show_perf_stats:
+            stats_text = self.perf_monitor.get_stats_text()
+            self.vis.update_perf_display(stats_text)
+        
+        # Store the pending frame index
+        self._pending_frame_index = index
+        
+        # Start async task to load the actual frame
+        self._frame_load_task = asyncio.create_task(self._load_frame_async(index))
+        
+        # Notify callback
+        if self.on_frame_changed:
+            self.on_frame_changed(self.current_frame)
+    
+    async def _load_frame_async(self, index: int) -> None:
+        """Load a frame asynchronously and update display when ready.
+        
+        Args:
+            index: Frame index to load.
+        """
+        try:
+            # Request the frame
+            await self.vs.request(index)
+            
+            # Wait a bit for it to load
+            await asyncio.sleep(0.02)  # 20ms wait
+            
+            # Check if we still want this frame (not cancelled or superseded)
+            if self._pending_frame_index != index:
+                return  # A newer frame was requested
+            
+            # Try to get the frame
+            frame = await self.vs.get(index, timeout=0.01)
+            
+            if frame is not None and self._pending_frame_index == index:
+                # We got the frame and it's still the one we want
+                # Handle both Frame objects and raw arrays
+                if hasattr(frame, 'rgb'):
+                    image_data = frame.rgb
+                else:
+                    image_data = frame
+                self.vis.set_frame_image(image_data)
+                self._last_rendered_frame = image_data
+                self.vis.draw()
+                
+                # Clear pending since we loaded it
+                self._pending_frame_index = None
+                
+        except asyncio.CancelledError:
+            # Task was cancelled, that's fine
+            pass
+        except Exception:
+            # Ignore other errors during async load
+            pass

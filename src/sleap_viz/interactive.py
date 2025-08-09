@@ -659,9 +659,14 @@ class InteractiveControls:
             target_frame = int(frame_ratio * self.controller.total_frames)
             target_frame = max(0, min(target_frame, self.controller.total_frames - 1))
         
-        # Jump to frame
+        # Use optimized scrubbing if we're dragging, normal goto for single clicks
         loop = asyncio.get_event_loop()
-        loop.create_task(self.controller.goto(target_frame))
+        if self._is_dragging or self._is_dragging_playhead:
+            # Use optimized scrubbing for responsive timeline interaction
+            loop.create_task(self.controller.scrub_to(target_frame))
+        else:
+            # Use normal goto for single clicks
+            loop.create_task(self.controller.goto(target_frame))
     
     def _on_wheel(self, event) -> None:
         """Handle mouse wheel events.

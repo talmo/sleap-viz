@@ -43,6 +43,7 @@ class VideoSource:
         self._lock = asyncio.Lock()
         self._queue: asyncio.Queue[int] = asyncio.Queue()
         self._task = asyncio.create_task(self._worker())
+        self._latest_request: int | None = None  # Track most recent request for cancellation
 
     async def _worker(self) -> None:
         """Background task that decodes requested frames into the cache."""
@@ -50,6 +51,12 @@ class VideoSource:
             index = await self._queue.get()
             if index < 0:
                 break
+            
+            # Skip if a newer request has been made
+            if self._latest_request is not None and self._latest_request != index:
+                self._queue.task_done()
+                continue
+                
             try:
                 arr = self.video[index]  # (H, W, C) or (H, W)
                 if arr.ndim == 2:
@@ -76,6 +83,16 @@ class VideoSource:
         Args:
             index: Absolute frame index to request.
         """
+        self._latest_request = index  # Track this as the latest request
+        
+        # Clear the queue of pending requests (they're obsolete now)
+        try:
+            while not self._queue.empty():
+                self._queue.get_nowait()
+                self._queue.task_done()
+        except asyncio.QueueEmpty:
+            pass
+        
         await self._queue.put(index)
 
     async def get(self, index: int, timeout: float = 0.01) -> Frame | None:
